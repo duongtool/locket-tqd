@@ -28,6 +28,7 @@ SAMPLE_MOMENT = {
     "canonical_uid": "mom1",
     "user": FRIEND_UID,
     "thumbnail_url": "https://example.com/t.jpg",
+    "image_url": "https://example.com/full.jpg",
     "video_url": None,
     "caption": "Xin chào",
     "date": {"_seconds": 1794700000},
@@ -213,6 +214,12 @@ class FakeClient:
         self.friends = FakeFriends()
         self.chat = FakeChat()
 
+    def post_api(self, endpoint, payload=None):
+        assert endpoint == "getLatestMomentV2", endpoint
+        if payload and payload.get("sync_token"):
+            return {"data": []}
+        return {"data": [dict(SAMPLE_MOMENT)]}
+
     def is_authenticated(self):
         return True
 
@@ -269,6 +276,7 @@ def main():
     check("feed normalize views_count", item.get("views_count") == 3)
     r = get("/api/feed/full")
     check("feed/full gộp + khử trùng", r.json().get("count") == 1 and len(r.json().get("items") or []) == 1)
+    check("feed/full có ảnh gốc nét", (r.json().get("items") or [{}])[0].get("image_url") == "https://example.com/full.jpg")
     get("/api/my-moments")
     get("/api/filters")
     post("/api/moments/viewed", {"moment_uid": "mom1"})

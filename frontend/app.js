@@ -165,9 +165,10 @@ function captionPillHtml(m) {
 
 function momentCard(m, inDetail = false) {
   const author = m.user || state.friendByUid[m.user_uid] || { uid: m.user_uid };
+  const fullImg = m.image_url || m.thumbnail_url || "";
   const media = m.video_url
-    ? `<video src="${esc(m.video_url)}" poster="${esc(m.thumbnail_url || "")}" controls playsinline></video>`
-    : `<img src="${esc(m.thumbnail_url || "")}" alt="" loading="lazy">`;
+    ? `<video src="${esc(m.video_url)}" poster="${esc(fullImg)}" controls playsinline></video>`
+    : `<img src="${esc(fullImg)}" alt="" loading="lazy">`;
   const viewsLine = m.views_count != null
     ? `<div class="moment-views">👀 ${esc(m.views_count)} lượt xem</div>` : "";
   const el = document.createElement("article");
@@ -232,7 +233,7 @@ function momentCard(m, inDetail = false) {
     if (!ghostMomentsOn()) {
       apiJson("/api/moments/viewed", { moment_uid: m.id }).catch(() => {});
     }
-    if (!inDetail) openLightbox(m.thumbnail_url, m.video_url);
+    if (!inDetail) openLightbox(m.image_url || m.thumbnail_url, m.video_url);
   });
   return el;
 }
@@ -307,8 +308,8 @@ function renderFeedGrid() {
     const cell = document.createElement("button");
     cell.className = "grid-cell";
     cell.innerHTML = `${m.video_url
-      ? `<video src="${esc(m.video_url)}" poster="${esc(m.thumbnail_url || "")}" muted playsinline preload="metadata"></video><span class="video-badge">▶ video</span>`
-      : `<img src="${esc(m.thumbnail_url || "")}" alt="" loading="lazy">`}
+      ? `<video src="${esc(m.video_url)}" poster="${esc(m.image_url || m.thumbnail_url || "")}" muted playsinline preload="metadata"></video><span class="video-badge">▶ video</span>`
+      : `<img src="${esc(m.image_url || m.thumbnail_url || "")}" alt="" loading="lazy">`}
       <span class="cell-author">${esc(fullName(author))}</span>`;
     cell.addEventListener("click", () => openMomentDetail(m));
     grid.appendChild(cell);
@@ -352,7 +353,7 @@ $("#rollcall-btn").addEventListener("click", async () => {
         ? `<video src="${esc(m.video_url)}" poster="${esc(m.thumbnail_url || "")}" muted playsinline></video>`
         : `<img src="${esc(m.thumbnail_url || "")}" alt="">`}
         <div class="rc-name">${esc(fullName(author))}</div>`;
-      cell.addEventListener("click", () => openLightbox(m.thumbnail_url, m.video_url));
+      cell.addEventListener("click", () => openLightbox(m.image_url || m.thumbnail_url, m.video_url));
       strip.appendChild(cell);
     });
   } catch (ex) { strip.innerHTML = `<span class="muted-note">${esc(ex.message)}</span>`; }
@@ -977,7 +978,7 @@ async function loadMe() {
         try { await api(`/api/moments/${encodeURIComponent(m.id)}`, { method: "DELETE" }); loadMe(); }
         catch (ex) { toast(ex.message); }
       });
-      cell.addEventListener("click", () => openLightbox(m.thumbnail_url, m.video_url));
+      cell.addEventListener("click", () => openLightbox(m.image_url || m.thumbnail_url, m.video_url));
       grid.appendChild(cell);
     });
   } catch { /* bỏ qua nếu chưa tải được */ }

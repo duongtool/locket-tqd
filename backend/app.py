@@ -184,6 +184,7 @@ def normalize_moment(m: Any) -> dict:
         "user_uid": user if isinstance(user, str) else _first(m, "user_uid", "owner_uid", "author_uid"),
         "user": normalize_user(user) if isinstance(user, dict) else None,
         "thumbnail_url": _first(m, "thumbnail_url", "thumbnailUrl", "image_url"),
+        "image_url": _first(m, "image_url", "imageUrl", "thumbnail_url"),
         "video_url": _first(m, "video_url", "videoUrl"),
         "caption": caption,
         "overlays": overlays,
@@ -311,46 +312,61 @@ def feed():
 
 
 @app.get("/api/feed/full")
-def feed_full(per_friend_limit: Optional[int] = None):
-    """Toàn bộ khoảnh khắc: trang feed mới nhất + toàn bộ lịch sử của từng
-    bạn bè (thư viện tự lật trang bằng sync_token) + bài của chính mình,
-    gộp lại, khử trùng lặp và sắp xếp mới nhất trước."""
+def feed_full(max_pages: int = 80):
+    """Toàn bộ khoảnh khắc của mọi người, lấy bằng MỘT lượt quét feed:
+    lật trang getLatestMomentV2 bằng sync_token (đúng cơ chế thư viện dùng)
+    cho tới khi hết dữ liệu, thay vì quét riêng từng bạn bè nên rất chậm.
+    Thứ tự giữ nguyên dòng thời gian của Locket (mới nhất trước), chỉ gộp
+    thêm bài của chính mình rồi sắp xếp ổn định theo thời gian."""
     client = require_auth()
 
     def _do():
         merged: dict = {}
+        order: list = []
 
         def _add(m):
             nm = normalize_moment(m)
-            if nm.get("id"):
-                merged[nm["id"]] = nm
+            mid = nm.get("id")
+            if mid and mid not in merged:
+                merged[mid] = nm
+                order.append(mid)
 
-        for m in client.moments.get_latest() or []:
-            _add(m)
+        seen = set()
+        sync = None
+        for _ in range(max(1, max_pages)):
+            payload = {
+                "should_count_missed_moments": True,
+                "include_group_moments": True,
+            }
+            if sync:
+                payload["sync_token"] = sync
+            res = client.post_api("getLatestMomentV2", payload)
+            data = res.get("data", []) if isinstance(res, dict) else []
+            if not data:
+                break
+            new_count = 0
+            for m in data:
+                if not isinstance(m, dict):
+                    continue
+                mid = m.get("canonical_uid")
+                if mid and mid not in seen:
+                    seen.add(mid)
+                    new_count += 1
+                    sync = mid
+                    _add(m)
+            if new_count == 0 or (isinstance(res, dict) and res.get("status") == 304):
+                break
+
         try:
             for m in client.moments.get_all_my_moments() or []:
                 _add(m)
         except Exception:
             pass
-        try:
-            friends = client.friends.get_all_friends() or []
-        except Exception:
-            friends = []
-        for f in friends:
-            uid = f.get("uid") if isinstance(f, dict) else None
-            if not uid:
-                continue
-            try:
-                items = client.moments.get_shared_moments_by_user(
-                    uid, limit=per_friend_limit
-                )
-                for m in items or []:
-                    _add(m)
-            except Exception:
-                continue
-        items = sorted(
-            merged.values(), key=lambda x: x.get("created_at") or 0, reverse=True
-        )
+
+        items = [merged[mid] for mid in order]
+        # Sắp xếp ổn định: bài có thời gian rõ ràng lên đúng vị trí mới->cũ,
+        # các bài còn lại giữ nguyên thứ tự quét được từ feed.
+        items.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
         return {"items": items, "count": len(items)}
 
     return run_lib(_do)
