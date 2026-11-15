@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Locket Tqd</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%23FFC93C'/><text x='50' y='68' font-size='52' text-anchor='middle'>💛</text></svg>">
+</head>
+<body>
+
+<!-- ================= MÀN HÌNH ĐĂNG NHẬP ================= -->
+<section id="login-view" class="view login-view hidden">
+  <div class="login-card">
+    <div class="logo-badge">💛</div>
+    <h1 class="logo-text">Locket <span>Tqd</span></h1>
+    <p class="login-sub">Chia sẻ khoảnh khắc với bạn bè, theo thời gian thực</p>
+    <form id="login-form">
+      <label class="field">
+        <span>Email</span>
+        <input type="email" id="login-email" placeholder="email@cuaban.com" autocomplete="email" required>
+      </label>
+      <label class="field">
+        <span>Mật khẩu</span>
+        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn-gold" id="login-btn">Đăng nhập</button>
+      <p class="login-note">Đăng nhập bằng chính tài khoản Locket của bạn.<br>Thông tin chỉ gửi thẳng tới máy chủ Locket.</p>
+      <p class="form-error" id="login-error"></p>
+    </form>
+  </div>
+</section>
+
+<!-- ================= KHUNG ỨNG DỤNG ================= -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <div class="brand"><span class="brand-badge">💛</span> Locket <b>Tqd</b></div>
+    <button id="me-chip" class="me-chip" title="Trang cá nhân">
+      <img id="me-avatar" alt="" class="avatar-img hidden">
+      <span id="me-initial" class="avatar-fallback">?</span>
+    </button>
+  </header>
+
+  <main id="main">
+    <!-- FEED -->
+    <section id="view-feed" class="view">
+      <div class="feed-head">
+        <h2>Khoảnh khắc</h2>
+        <button class="btn-ghost" id="feed-refresh">↻ Làm mới</button>
+      </div>
+      <div id="feed-list" class="feed-list"></div>
+      <p class="empty hidden" id="feed-empty">Chưa có khoảnh khắc nào. Hãy là người đầu tiên đăng nhé!</p>
+    </section>
+
+    <!-- ĐĂNG BÀI -->
+    <section id="view-post" class="view hidden">
+      <h2>Đăng khoảnh khắc</h2>
+      <div class="post-stage" id="post-stage">
+        <div class="post-placeholder" id="post-placeholder">
+          <div class="cam-icon">📸</div>
+          <p>Chạm để chọn ảnh hoặc video</p>
+        </div>
+        <img id="post-preview-img" class="hidden" alt="">
+        <video id="post-preview-video" class="hidden" controls playsinline></video>
+        <div id="post-caption-pill" class="caption-pill hidden"></div>
+      </div>
+      <input type="file" id="post-file" accept="image/*,video/*" class="hidden">
+      <div class="shutter-row">
+        <button class="shutter" id="post-pick" title="Chọn ảnh hoặc video"></button>
+      </div>
+      <label class="field">
+        <span>Chú thích</span>
+        <input type="text" id="post-caption" maxlength="120" placeholder="Viết gì đó thật vui…">
+      </label>
+      <label class="field">
+        <span>Kiểu nhãn (preset của Locket)</span>
+        <select id="post-preset"></select>
+      </label>
+      <div class="color-row">
+        <label class="color-field">Màu 1 <input type="color" id="post-color1" value="#FF5F6D"></label>
+        <label class="color-field">Màu 2 <input type="color" id="post-color2" value="#FFC371"></label>
+        <label class="color-field">Màu chữ <input type="color" id="post-textcolor" value="#FFFFFF"></label>
+        <label class="check-field"><input type="checkbox" id="post-custom-colors"> Tự phối màu</label>
+      </div>
+      <label class="check-field block"><input type="checkbox" id="post-private"> Chỉ gửi cho chính mình</label>
+      <button class="btn-gold" id="post-submit">Gửi tới bạn bè</button>
+      <p class="form-error" id="post-error"></p>
+      <p class="ok-msg" id="post-ok"></p>
+    </section>
+
+    <!-- BẠN BÈ -->
+    <section id="view-friends" class="view hidden">
+      <h2>Bạn bè</h2>
+      <form id="add-friend-form" class="inline-form">
+        <input type="text" id="add-friend-username" placeholder="Nhập username Locket…">
+        <button class="btn-gold small" type="submit">Kết bạn</button>
+      </form>
+      <p class="form-error" id="friend-error"></p>
+      <p class="ok-msg" id="friend-ok"></p>
+      <h3 class="sub-head hidden" id="requests-head">Lời mời đang chờ</h3>
+      <div id="requests-list" class="people-list"></div>
+      <h3 class="sub-head">Tất cả bạn bè</h3>
+      <div id="friends-list" class="people-list"></div>
+    </section>
+
+    <!-- TIN NHẮN -->
+    <section id="view-chat" class="view hidden">
+      <h2>Tin nhắn</h2>
+      <div id="conv-list" class="people-list"></div>
+      <div id="chat-box" class="chat-box hidden">
+        <button class="btn-ghost" id="chat-back">← Quay lại</button>
+        <h3 id="chat-title"></h3>
+        <div id="chat-messages" class="chat-messages"></div>
+        <form id="chat-form" class="inline-form">
+          <input type="text" id="chat-input" placeholder="Nhắn gì đó…">
+          <button class="btn-gold small" type="submit">Gửi</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- TÔI -->
+    <section id="view-me" class="view hidden">
+      <h2>Trang cá nhân</h2>
+      <div class="profile-card">
+        <img id="profile-avatar" class="profile-avatar hidden" alt="">
+        <div id="profile-initial" class="profile-avatar fallback">?</div>
+        <div class="profile-info">
+          <div id="profile-name" class="profile-name">…</div>
+          <div id="profile-username" class="profile-username"></div>
+          <div id="profile-email" class="profile-email"></div>
+        </div>
+      </div>
+      <form id="name-form" class="two-col">
+        <input type="text" id="edit-first" placeholder="Họ / tên đệm">
+        <input type="text" id="edit-last" placeholder="Tên">
+        <button class="btn-ghost" type="submit">Lưu tên</button>
+      </form>
+      <label class="btn-ghost file-btn">Đổi ảnh đại diện
+        <input type="file" id="avatar-file" accept="image/*" class="hidden">
+      </label>
+      <p class="ok-msg" id="me-ok"></p>
+      <p class="form-error" id="me-error"></p>
+      <h3 class="sub-head">Khoảnh khắc của tôi</h3>
+      <div id="my-moments" class="moment-grid"></div>
+      <button class="btn-danger" id="logout-btn">Đăng xuất</button>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <button data-nav="feed" class="nav-btn active"><span class="nav-ico">🏠</span><span>Trang chủ</span></button>
+    <button data-nav="post" class="nav-btn"><span class="nav-ico">📸</span><span>Đăng</span></button>
+    <button data-nav="friends" class="nav-btn"><span class="nav-ico">👥</span><span>Bạn bè</span></button>
+    <button data-nav="chat" class="nav-btn"><span class="nav-ico">💬</span><span>Tin nhắn</span></button>
+    <button data-nav="me" class="nav-btn"><span class="nav-ico">😊</span><span>Tôi</span></button>
+  </nav>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<div id="lightbox" class="lightbox hidden"><img id="lightbox-img" alt=""><video id="lightbox-video" controls playsinline class="hidden"></video></div>
+
+<script src="app.js"></script>
+</body>
+</html>

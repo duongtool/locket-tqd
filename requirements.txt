@@ -1,5 +1,9 @@
-locketlam>=1.0.2
-flask>=3.0.0
-flask-cors>=4.0.0
-gunicorn>=21.0.0
-imageio-ffmpeg>=0.5.0
+# Backend Locket Tqd
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+# Thư viện locketlam (đã đóng gói kèm trong thư mục gốc)
+requests>=2.31.0
+websockets>=12.0
+pillow>=9.0.0
+imageio-ffmpeg>=0.4.8
