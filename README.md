@@ -71,6 +71,7 @@ locket-tqd/
 | POST | `/api/session/refresh` | Làm mới token phiên đăng nhập |
 | POST | `/api/session/sync` | Đồng bộ cài đặt + token thông báo với Locket |
 | GET | `/api/feed` | Feed khoảnh khắc mới nhất |
+| GET | `/api/feed/full` | Toàn bộ khoảnh khắc (lịch sử của mọi bạn bè + bài của mình, đã khử trùng lặp) |
 | GET | `/api/my-moments` | Khoảnh khắc của tôi (hỗ trợ `limit`, `start_date`, `end_date`) |
 | GET | `/api/users/{username}/moments` | Khoảnh khắc của một người dùng |
 | GET | `/api/filters` | Danh sách bộ lọc máy ảnh của Locket |

@@ -310,6 +310,52 @@ def feed():
     return {"items": [normalize_moment(m) for m in (items or [])]}
 
 
+@app.get("/api/feed/full")
+def feed_full(per_friend_limit: Optional[int] = None):
+    """Toàn bộ khoảnh khắc: trang feed mới nhất + toàn bộ lịch sử của từng
+    bạn bè (thư viện tự lật trang bằng sync_token) + bài của chính mình,
+    gộp lại, khử trùng lặp và sắp xếp mới nhất trước."""
+    client = require_auth()
+
+    def _do():
+        merged: dict = {}
+
+        def _add(m):
+            nm = normalize_moment(m)
+            if nm.get("id"):
+                merged[nm["id"]] = nm
+
+        for m in client.moments.get_latest() or []:
+            _add(m)
+        try:
+            for m in client.moments.get_all_my_moments() or []:
+                _add(m)
+        except Exception:
+            pass
+        try:
+            friends = client.friends.get_all_friends() or []
+        except Exception:
+            friends = []
+        for f in friends:
+            uid = f.get("uid") if isinstance(f, dict) else None
+            if not uid:
+                continue
+            try:
+                items = client.moments.get_shared_moments_by_user(
+                    uid, limit=per_friend_limit
+                )
+                for m in items or []:
+                    _add(m)
+            except Exception:
+                continue
+        items = sorted(
+            merged.values(), key=lambda x: x.get("created_at") or 0, reverse=True
+        )
+        return {"items": items, "count": len(items)}
+
+    return run_lib(_do)
+
+
 @app.get("/api/my-moments")
 def my_moments(
     limit: Optional[int] = None,

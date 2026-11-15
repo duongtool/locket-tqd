@@ -267,6 +267,8 @@ def main():
     item = (r.json().get("items") or [{}])[0]
     check("feed normalize id", item.get("id") == "mom1")
     check("feed normalize views_count", item.get("views_count") == 3)
+    r = get("/api/feed/full")
+    check("feed/full gộp + khử trùng", r.json().get("count") == 1 and len(r.json().get("items") or []) == 1)
     get("/api/my-moments")
     get("/api/filters")
     post("/api/moments/viewed", {"moment_uid": "mom1"})
