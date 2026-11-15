@@ -252,24 +252,35 @@ function ghostMomentsOn() {
   });
 })();
 
-async function loadFeed() {
+async function loadFeed(forceFresh = false) {
   const grid = $("#feed-grid");
-  grid.innerHTML = `<p class="empty" style="grid-column:1/-1">Đang tải toàn bộ khoảnh khắc…</p>`;
+  if (!state.feedItems.length) {
+    grid.innerHTML = `<p class="empty" style="grid-column:1/-1">Đang tải khoảnh khắc…</p>`;
+  }
   $("#feed-empty").classList.add("hidden");
+  // Lớp 1: trang mới nhất về rất nhanh, hiện lên ngay cho khỏi phải chờ.
   try {
-    let data;
-    try {
-      data = await api("/api/feed/full");
-    } catch {
-      data = await api("/api/feed");
+    const first = await api("/api/feed");
+    if ((first.items || []).length >= state.feedItems.length) {
+      state.feedItems = first.items || [];
+      buildFeedFilter();
+      renderFeedGrid();
     }
-    state.feedItems = data.items || [];
-    buildFeedFilter();
-    renderFeedGrid();
   } catch (ex) {
-    grid.innerHTML = "";
+    if (!state.feedItems.length) grid.innerHTML = "";
     toast(ex.message);
   }
+  // Lớp 2: toàn bộ lịch sử tải ở nền xong thì tự thay vào, giữ nguyên vị trí cuộn.
+  try {
+    const full = await api(forceFresh ? "/api/feed/full?fresh=1" : "/api/feed/full");
+    if ((full.items || []).length >= state.feedItems.length) {
+      const y = window.scrollY;
+      state.feedItems = full.items;
+      buildFeedFilter();
+      renderFeedGrid();
+      window.scrollTo(0, y);
+    }
+  } catch { /* giữ bản trang đầu nếu lớp 2 lỗi */ }
 }
 
 function feedAuthorUid(m) {
@@ -307,9 +318,8 @@ function renderFeedGrid() {
     const author = m.user || state.friendByUid[feedAuthorUid(m)] || {};
     const cell = document.createElement("button");
     cell.className = "grid-cell";
-    cell.innerHTML = `${m.video_url
-      ? `<video src="${esc(m.video_url)}" poster="${esc(m.image_url || m.thumbnail_url || "")}" muted playsinline preload="metadata"></video><span class="video-badge">▶ video</span>`
-      : `<img src="${esc(m.image_url || m.thumbnail_url || "")}" alt="" loading="lazy">`}
+    cell.innerHTML = `<img src="${esc(m.thumbnail_url || m.image_url || "")}" alt="" loading="lazy" decoding="async">
+      ${m.video_url ? `<span class="video-badge">▶ video</span>` : ""}
       <span class="cell-author">${esc(fullName(author))}</span>`;
     cell.addEventListener("click", () => openMomentDetail(m));
     grid.appendChild(cell);
@@ -334,7 +344,7 @@ $("#moment-detail-close").addEventListener("click", closeMomentDetail);
 $("#moment-detail").addEventListener("click", (e) => {
   if (e.target.id === "moment-detail") closeMomentDetail();
 });
-$("#feed-refresh").addEventListener("click", loadFeed);
+$("#feed-refresh").addEventListener("click", () => loadFeed(true));
 
 $("#rollcall-btn").addEventListener("click", async () => {
   const strip = $("#rollcall-strip");

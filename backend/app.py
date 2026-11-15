@@ -311,21 +311,33 @@ def feed():
     return {"items": [normalize_moment(m) for m in (items or [])]}
 
 
+_feed_cache: dict = {"ts": 0.0, "items": None}
+
+
 @app.get("/api/feed/full")
-def feed_full(max_pages: int = 80):
-    """Toàn bộ khoảnh khắc của mọi người, lấy bằng MỘT lượt quét feed:
-    lật trang getLatestMomentV2 bằng sync_token (đúng cơ chế thư viện dùng)
-    cho tới khi hết dữ liệu, thay vì quét riêng từng bạn bè nên rất chậm.
-    Thứ tự giữ nguyên dòng thời gian của Locket (mới nhất trước), chỉ gộp
-    thêm bài của chính mình rồi sắp xếp ổn định theo thời gian."""
+def feed_full(max_pages: int = 25, fresh: bool = False):
+    """Toàn bộ khoảnh khắc của mọi người bằng MỘT lượt quét feed (sync_token).
+    Có ngân sách thời gian (~25 giây) và trần số trang để không treo máy chủ;
+    kết quả được đệm 120 giây. Dữ liệu trả về đã bỏ trường raw cho nhẹ."""
     client = require_auth()
 
+    now = time.time()
+    if (
+        not fresh
+        and _feed_cache["items"] is not None
+        and now - _feed_cache["ts"] < 120
+    ):
+        items = _feed_cache["items"]
+        return {"items": items, "count": len(items), "cached": True}
+
     def _do():
+        deadline = time.time() + 25
         merged: dict = {}
         order: list = []
 
         def _add(m):
             nm = normalize_moment(m)
+            nm.pop("raw", None)
             mid = nm.get("id")
             if mid and mid not in merged:
                 merged[mid] = nm
@@ -333,7 +345,11 @@ def feed_full(max_pages: int = 80):
 
         seen = set()
         sync = None
+        partial = False
         for _ in range(max(1, max_pages)):
+            if time.time() > deadline:
+                partial = True
+                break
             payload = {
                 "should_count_missed_moments": True,
                 "include_group_moments": True,
@@ -356,6 +372,8 @@ def feed_full(max_pages: int = 80):
                     _add(m)
             if new_count == 0 or (isinstance(res, dict) and res.get("status") == 304):
                 break
+        else:
+            partial = True
 
         try:
             for m in client.moments.get_all_my_moments() or []:
@@ -364,10 +382,10 @@ def feed_full(max_pages: int = 80):
             pass
 
         items = [merged[mid] for mid in order]
-        # Sắp xếp ổn định: bài có thời gian rõ ràng lên đúng vị trí mới->cũ,
-        # các bài còn lại giữ nguyên thứ tự quét được từ feed.
         items.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
-        return {"items": items, "count": len(items)}
+        _feed_cache["ts"] = time.time()
+        _feed_cache["items"] = items
+        return {"items": items, "count": len(items), "partial": partial}
 
     return run_lib(_do)
 
