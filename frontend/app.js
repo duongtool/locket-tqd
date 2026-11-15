@@ -454,14 +454,25 @@ $("#post-pick").addEventListener("click", () => $("#post-file").click());
 function setPostFile(f) {
   state.postFile = f;
   const url = URL.createObjectURL(f);
-  const isVideo = f.type.startsWith("video");
+  // Nhận diện video theo cả kiểu MIME lẫn đuôi file (có file trình duyệt
+  // không báo MIME, trước đây bị hiểu nhầm thành ảnh nên xem trước sai).
+  const isVideo = (f.type || "").startsWith("video")
+    || /\.(mp4|mov|webm|mkv|avi|m4v|3gp)$/i.test(f.name || "");
   state.postKind = isVideo ? "video" : "image";
   $("#post-placeholder").classList.add("hidden");
   $("#cam-preview").classList.add("hidden");
   $("#post-clear").classList.remove("hidden");
   $("#post-preview-img").classList.toggle("hidden", isVideo);
   $("#post-preview-video").classList.toggle("hidden", !isVideo);
-  if (isVideo) $("#post-preview-video").src = url; else $("#post-preview-img").src = url;
+  if (isVideo) {
+    const pv = $("#post-preview-video");
+    pv.src = url;
+    pv.muted = true;
+    pv.loop = true;
+    pv.play().catch(() => { /* trình duyệt chặn tự phát thì vẫn có nút phát */ });
+  } else {
+    $("#post-preview-img").src = url;
+  }
   refreshPostPill();
 }
 
@@ -472,6 +483,7 @@ function clearPostFile() {
   $("#post-preview-img").classList.add("hidden");
   const pv = $("#post-preview-video");
   pv.classList.add("hidden");
+  try { pv.pause(); } catch { /* ignore */ }
   pv.removeAttribute("src");
   $("#post-clear").classList.add("hidden");
   refreshPostPill();

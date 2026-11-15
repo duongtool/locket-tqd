@@ -617,18 +617,12 @@ class MomentsModule:
             fd_out, temp_out = tempfile.mkstemp(suffix=".mp4")
             os.close(fd_out)
 
-            # Check if FFmpeg has libx265 (HEVC) available for ultra-high efficiency while keeping 100% resolution
+            # Ưu tiên TỐC ĐỘ nén: luôn dùng H.264 (libx264), bỏ qua HEVC/libx265
+            # vì x265 mã hóa cực chậm trên máy chủ yếu. H.264 vẫn đúng chuẩn Locket.
             use_hevc = False
-            if preserve_resolution:
-                try:
-                    chk = subprocess.run([ffmpeg_bin, "-encoders"], capture_output=True, text=True)
-                    if "libx265" in chk.stdout:
-                        use_hevc = True
-                except Exception:
-                    pass
 
-            # Choose preset: use 'veryfast' for very long clips (>180s) to encode quickly without timeout
-            enc_preset = "veryfast" if duration > 180 else "fast"
+            # Preset mã hóa siêu nhanh cho H.264
+            enc_preset = "ultrafast"
 
             if use_hevc:
                 # H.265 / HEVC: Keeps 100% original resolution with Apple 'hvc1' tag, halving file size
@@ -652,22 +646,19 @@ class MomentsModule:
                 if fps_target:
                     cmd_compress.extend(["-r", str(fps_target)])
             else:
-                # H.264 standard
-                if preserve_resolution:
-                    scale_filter = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
-                else:
-                    scale_limit = 720 if duration > 45 else max_dimension
-                    scale_filter = (
-                        f"scale=w='min({scale_limit},iw)':h='min({scale_limit},ih)':force_original_aspect_ratio=decrease,"
-                        f"scale=trunc(iw/2)*2:trunc(ih/2)*2"
-                    )
+                # H.264: giới hạn tối đa 720p + preset ultrafast để nén thật nhanh
+                # (khoảnh khắc Locket xem trên điện thoại nên 720p là đủ nét).
+                scale_filter = (
+                    "scale=w='min(720,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease,"
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+                )
 
                 cmd_compress = [
                     ffmpeg_bin, "-y",
                     "-i", in_path,
                     "-c:v", "libx264",
                     "-pix_fmt", "yuv420p",
-                    "-preset", "fast",
+                    "-preset", "ultrafast",
                     "-b:v", f"{video_kbps}k",
                     "-maxrate", f"{int(video_kbps * 1.15)}k",
                     "-bufsize", f"{int(video_kbps * 1.8)}k",

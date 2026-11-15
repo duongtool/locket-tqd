@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -354,12 +355,21 @@ def feed_full(fresh: bool = False):
         my_uid = getattr(client.session, "uid", None)
         if my_uid and my_uid not in targets:
             targets.append(my_uid)
-        for uid in targets:
+
+        # Đa luồng: quét lịch sử của từng người SONG SONG (tối đa 6 luồng)
+        # thay vì lần lượt từng người, tổng thời gian giảm còn khoảng 1/6.
+        # post_api của thư viện dùng urllib độc lập mỗi lần gọi nên an toàn.
+        def _fetch(uid):
             try:
-                for m in client.moments.get_shared_moments_by_user(uid) or []:
-                    _add(m)
+                return client.moments.get_shared_moments_by_user(uid) or []
             except Exception:
-                continue
+                return []
+
+        if targets:
+            with ThreadPoolExecutor(max_workers=min(6, len(targets))) as pool:
+                for items in pool.map(_fetch, targets):
+                    for m in items:
+                        _add(m)
 
         items = sorted(
             merged.values(), key=lambda x: x.get("created_at") or 0, reverse=True
