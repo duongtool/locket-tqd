@@ -270,16 +270,19 @@ async function loadFeed(forceFresh = false) {
     toast(ex.message);
   }
   // Lớp 2: toàn bộ lịch sử tải ở nền xong thì tự thay vào, giữ nguyên vị trí cuộn.
+  const countEl = $("#feed-count");
   try {
+    if (countEl && countEl.textContent) countEl.textContent += " · đang tải thêm toàn bộ…";
     const full = await api(forceFresh ? "/api/feed/full?fresh=1" : "/api/feed/full");
     if ((full.items || []).length >= state.feedItems.length) {
       const y = window.scrollY;
       state.feedItems = full.items;
-      buildFeedFilter();
       renderFeedGrid();
       window.scrollTo(0, y);
     }
-  } catch { /* giữ bản trang đầu nếu lớp 2 lỗi */ }
+  } catch { /* giữ bản trang đầu nếu lớp 2 lỗi */ } finally {
+    buildFeedFilter();
+  }
 }
 
 function feedAuthorUid(m) {
@@ -547,7 +550,10 @@ $("#cam-shutter").addEventListener("click", () => {
   const canvas = document.createElement("canvas");
   canvas.width = pv.videoWidth;
   canvas.height = pv.videoHeight;
-  canvas.getContext("2d").drawImage(pv, 0, 0);
+  const ctx = canvas.getContext("2d");
+  ctx.translate(canvas.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(pv, 0, 0);
   canvas.toBlob((blob) => {
     if (!blob) { toast("Chụp thất bại"); return; }
     stopCamera();

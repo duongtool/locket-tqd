@@ -315,10 +315,12 @@ _feed_cache: dict = {"ts": 0.0, "items": None}
 
 
 @app.get("/api/feed/full")
-def feed_full(max_pages: int = 25, fresh: bool = False):
-    """Toàn bộ khoảnh khắc của mọi người bằng MỘT lượt quét feed (sync_token).
-    Có ngân sách thời gian (~25 giây) và trần số trang để không treo máy chủ;
-    kết quả được đệm 120 giây. Dữ liệu trả về đã bỏ trường raw cho nhẹ."""
+def feed_full(fresh: bool = False):
+    """Toàn bộ khoảnh khắc, dùng đúng phương thức của thư viện locketlam:
+    get_latest() + get_shared_moments_by_user() cho từng bạn bè và cho
+    chính mình. Thư viện tự lật trang bằng sync_token kèm excluded_users
+    cho tới khi hết dữ liệu của từng người nên lấy được trọn lịch sử.
+    Kết quả đệm 120 giây; giao diện hiện trang đầu ngay và bổ sung sau."""
     client = require_auth()
 
     now = time.time()
@@ -331,9 +333,7 @@ def feed_full(max_pages: int = 25, fresh: bool = False):
         return {"items": items, "count": len(items), "cached": True}
 
     def _do():
-        deadline = time.time() + 25
         merged: dict = {}
-        order: list = []
 
         def _add(m):
             nm = normalize_moment(m)
@@ -341,51 +341,32 @@ def feed_full(max_pages: int = 25, fresh: bool = False):
             mid = nm.get("id")
             if mid and mid not in merged:
                 merged[mid] = nm
-                order.append(mid)
 
-        seen = set()
-        sync = None
-        partial = False
-        for _ in range(max(1, max_pages)):
-            if time.time() > deadline:
-                partial = True
-                break
-            payload = {
-                "should_count_missed_moments": True,
-                "include_group_moments": True,
-            }
-            if sync:
-                payload["sync_token"] = sync
-            res = client.post_api("getLatestMomentV2", payload)
-            data = res.get("data", []) if isinstance(res, dict) else []
-            if not data:
-                break
-            new_count = 0
-            for m in data:
-                if not isinstance(m, dict):
-                    continue
-                mid = m.get("canonical_uid")
-                if mid and mid not in seen:
-                    seen.add(mid)
-                    new_count += 1
-                    sync = mid
-                    _add(m)
-            if new_count == 0 or (isinstance(res, dict) and res.get("status") == 304):
-                break
-        else:
-            partial = True
-
+        for m in client.moments.get_latest() or []:
+            _add(m)
         try:
-            for m in client.moments.get_all_my_moments() or []:
-                _add(m)
+            friends = client.friends.get_all_friends() or []
         except Exception:
-            pass
+            friends = []
+        targets = [
+            f.get("uid") for f in friends if isinstance(f, dict) and f.get("uid")
+        ]
+        my_uid = getattr(client.session, "uid", None)
+        if my_uid and my_uid not in targets:
+            targets.append(my_uid)
+        for uid in targets:
+            try:
+                for m in client.moments.get_shared_moments_by_user(uid) or []:
+                    _add(m)
+            except Exception:
+                continue
 
-        items = [merged[mid] for mid in order]
-        items.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
+        items = sorted(
+            merged.values(), key=lambda x: x.get("created_at") or 0, reverse=True
+        )
         _feed_cache["ts"] = time.time()
         _feed_cache["items"] = items
-        return {"items": items, "count": len(items), "partial": partial}
+        return {"items": items, "count": len(items)}
 
     return run_lib(_do)
 
