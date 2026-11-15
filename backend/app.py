@@ -26,7 +26,18 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+import asyncio
+
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -176,6 +187,9 @@ def normalize_moment(m: Any) -> dict:
         "video_url": _first(m, "video_url", "videoUrl"),
         "caption": caption,
         "overlays": overlays,
+        "views_count": m.get("views_count"),
+        "viewers": m.get("viewers"),
+        "reactions": m.get("reactions"),
         "created_at": epoch,
         "created_at_iso": (
             datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat() if epoch else None
@@ -297,9 +311,17 @@ def feed():
 
 
 @app.get("/api/my-moments")
-def my_moments():
+def my_moments(
+    limit: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
     client = require_auth()
-    items = run_lib(lambda: client.moments.get_all_my_moments())
+    items = run_lib(
+        lambda: client.moments.get_all_my_moments(
+            limit=limit, start_date=start_date, end_date=end_date
+        )
+    )
     return {"items": [normalize_moment(m) for m in (items or [])]}
 
 
@@ -322,6 +344,7 @@ async def post_moment(
     colors: Optional[str] = Form(None),
     text_color: Optional[str] = Form(None),
     is_private: bool = Form(False),
+    recipients: Optional[str] = Form(None),
 ):
     client = require_auth()
     if image is None and video is None:
@@ -350,6 +373,15 @@ async def post_moment(
             except Exception:
                 color_list = [c.strip() for c in colors.split(",") if c.strip()]
 
+        recipient_list = None
+        if recipients:
+            try:
+                parsed_r = json.loads(recipients)
+                if isinstance(parsed_r, list):
+                    recipient_list = [str(x) for x in parsed_r if x]
+            except Exception:
+                recipient_list = None
+
         def _do():
             return client.moments.post(
                 image=image_path,
@@ -360,6 +392,7 @@ async def post_moment(
                 colors=color_list,
                 text_color=text_color or None,
                 is_private=bool(is_private),
+                recipients=recipient_list,
             )
 
         result = run_lib(_do)
@@ -501,6 +534,316 @@ async def send_message(req: Request):
     if not receiver_uid or not text:
         raise HTTPException(status_code=422, detail="Thiếu người nhận hoặc nội dung.")
     return run_lib(lambda: client.chat.send_message(receiver_uid, text))
+
+
+# ---------------------------------------------------------------------------
+# Thiết bị giả lập & phiên nâng cao
+# ---------------------------------------------------------------------------
+@app.get("/api/device")
+def device_info():
+    client = get_client()
+    try:
+        info = client.device.to_dict()
+    except Exception:
+        info = {}
+    return {"device": info}
+
+
+@app.post("/api/device/auto")
+async def device_auto(req: Request):
+    body = await req.json()
+    auto = bool(body.get("auto_emulate", True))
+    client = get_client()
+
+    def _do():
+        client.set_device(auto_emulate=auto)
+        return {"device": client.device.to_dict()}
+
+    return run_lib(_do)
+
+
+@app.post("/api/session/refresh")
+def session_refresh():
+    client = require_auth()
+    return run_lib(lambda: (client.session.refresh(), {"ok": True})[1])
+
+
+@app.post("/api/session/sync")
+def session_sync():
+    client = require_auth()
+
+    def _do():
+        out = {}
+        try:
+            out["sync"] = client.user.sync_client_data()
+        except Exception as e:
+            out["sync_error"] = str(e)
+        try:
+            out["notification_token"] = client.user.set_notification_token()
+        except Exception as e:
+            out["notification_token_error"] = str(e)
+        return out
+
+    return run_lib(_do)
+
+
+# ---------------------------------------------------------------------------
+# Hồ sơ mở rộng
+# ---------------------------------------------------------------------------
+@app.post("/api/profile/birthdate")
+async def update_birthdate(req: Request):
+    client = require_auth()
+    body = await req.json()
+    birthdate = (body.get("birthdate") or "").strip()
+    if not birthdate:
+        raise HTTPException(status_code=422, detail="Thiếu ngày sinh (YYYY-MM-DD).")
+    return run_lib(lambda: client.user.update_birthdate(birthdate))
+
+
+@app.get("/api/users/by-uid/{user_uid}")
+def user_by_uid(user_uid: str):
+    client = require_auth()
+    profile = run_lib(lambda: client.user.get_profile(user_uid))
+    return normalize_user(profile)
+
+
+@app.get("/api/users/by-uid/{user_uid}/moments")
+def moments_by_uid(user_uid: str, limit: Optional[int] = None):
+    client = require_auth()
+    items = run_lib(
+        lambda: client.moments.get_shared_moments_by_user(user_uid, limit=limit)
+    )
+    return {"items": [normalize_moment(m) for m in (items or [])]}
+
+
+# ---------------------------------------------------------------------------
+# Khoảnh khắc mở rộng: bộ lọc, đã xem, Rollcall
+# ---------------------------------------------------------------------------
+@app.get("/api/filters")
+def filters():
+    client = require_auth()
+    return run_lib(lambda: client.moments.get_filters())
+
+
+@app.post("/api/moments/viewed")
+async def mark_viewed(req: Request):
+    client = require_auth()
+    body = await req.json()
+    moment_uid = body.get("moment_uid")
+    if not moment_uid:
+        raise HTTPException(status_code=422, detail="Thiếu moment_uid.")
+    return run_lib(lambda: client.moments.mark_as_viewed(moment_uid))
+
+
+@app.get("/api/rollcall")
+def rollcall(week: Optional[int] = None, year: Optional[int] = None):
+    client = require_auth()
+    result = run_lib(
+        lambda: client.moments.get_rollcall_posts(week_of_year=week, year=year)
+    )
+    items: list = []
+    if isinstance(result, list):
+        items = result
+    elif isinstance(result, dict):
+        for key in ("posts", "moments", "data", "items", "rollcall_posts"):
+            if isinstance(result.get(key), list):
+                items = result[key]
+                break
+    return {"items": [normalize_moment(m) for m in items], "raw": result}
+
+
+# ---------------------------------------------------------------------------
+# Bạn bè mở rộng: nhóm, chặn, gợi ý, link mời
+# ---------------------------------------------------------------------------
+@app.get("/api/groups")
+def groups():
+    client = require_auth()
+    return run_lib(lambda: client.friends.get_groups_and_friends())
+
+
+@app.post("/api/friends/block")
+async def block_friend(req: Request):
+    client = require_auth()
+    body = await req.json()
+    user_uid = (body.get("user_uid") or "").strip()
+    if not user_uid:
+        raise HTTPException(status_code=422, detail="Thiếu user_uid.")
+    return run_lib(lambda: client.friends.block(user_uid))
+
+
+@app.post("/api/friends/unblock")
+async def unblock_friend(req: Request):
+    client = require_auth()
+    body = await req.json()
+    user_uid = (body.get("user_uid") or "").strip()
+    if not user_uid:
+        raise HTTPException(status_code=422, detail="Thiếu user_uid.")
+    return run_lib(lambda: client.friends.unblock(user_uid))
+
+
+@app.post("/api/friends/suggest")
+async def suggest_friends(req: Request):
+    client = require_auth()
+    body = await req.json()
+    contacts = body.get("phone_contacts") or []
+    if not isinstance(contacts, list):
+        raise HTTPException(status_code=422, detail="phone_contacts phải là danh sách.")
+    result = run_lib(lambda: client.friends.suggest_friends(contacts))
+    items: list = []
+    if isinstance(result, list):
+        items = result
+    elif isinstance(result, dict):
+        for key in ("data", "users", "suggestions", "items"):
+            if isinstance(result.get(key), list):
+                items = result[key]
+                break
+    return {"items": [normalize_user(u) for u in items], "raw": result}
+
+
+@app.get("/api/invite/{username}")
+def invite_info(username: str):
+    client = require_auth()
+
+    def _do():
+        token = client.friends.resolve_invite_token_from_username(username)
+        user = None
+        if token:
+            try:
+                user = client.friends.fetch_user_by_invite_token(token)
+            except Exception:
+                user = None
+        return {
+            "username": username,
+            "invite_token": token,
+            "link": f"https://locket.cam/{username}",
+            "user": normalize_user(user) if user else None,
+        }
+
+    return run_lib(_do)
+
+
+# ---------------------------------------------------------------------------
+# Tin nhắn mở rộng: gửi khoảnh khắc, cảm xúc, thu hồi, đã đọc, thời gian thực
+# ---------------------------------------------------------------------------
+@app.get("/api/chat/reactions")
+def chat_reactions():
+    require_auth()
+    from locketlam.modules.chat import ChatModule
+
+    return {"items": ChatModule.get_supported_reactions()}
+
+
+@app.post("/api/messages/send-moment")
+async def send_moment(req: Request):
+    client = require_auth()
+    body = await req.json()
+    receiver_uid = (body.get("receiver_uid") or "").strip()
+    moment_uid = (body.get("moment_uid") or "").strip()
+    text = body.get("text")
+    if not receiver_uid or not moment_uid:
+        raise HTTPException(status_code=422, detail="Thiếu receiver_uid hoặc moment_uid.")
+    return run_lib(
+        lambda: client.chat.send_moment(receiver_uid, moment_uid, text or None)
+    )
+
+
+@app.post("/api/messages/reaction")
+async def message_reaction(req: Request):
+    client = require_auth()
+    body = await req.json()
+    conversation_id = (body.get("conversation_id") or "").strip()
+    message_id = (body.get("message_id") or "").strip()
+    emoji = (body.get("emoji") or "").strip()
+    if not conversation_id or not message_id or not emoji:
+        raise HTTPException(
+            status_code=422, detail="Thiếu conversation_id, message_id hoặc emoji."
+        )
+    return run_lib(
+        lambda: client.chat.send_reaction(conversation_id, message_id, emoji)
+    )
+
+
+@app.post("/api/messages/reaction/remove")
+async def message_reaction_remove(req: Request):
+    client = require_auth()
+    body = await req.json()
+    conversation_id = (body.get("conversation_id") or "").strip()
+    message_id = (body.get("message_id") or "").strip()
+    if not conversation_id or not message_id:
+        raise HTTPException(status_code=422, detail="Thiếu conversation_id hoặc message_id.")
+    return run_lib(
+        lambda: client.chat.remove_reaction(conversation_id, message_id)
+    )
+
+
+@app.post("/api/messages/delete")
+async def message_delete(req: Request):
+    client = require_auth()
+    body = await req.json()
+    conversation_uid = (body.get("conversation_uid") or "").strip()
+    message_uid = (body.get("message_uid") or "").strip()
+    if not conversation_uid or not message_uid:
+        raise HTTPException(status_code=422, detail="Thiếu conversation_uid hoặc message_uid.")
+    return run_lib(
+        lambda: client.chat.delete_message(conversation_uid, message_uid)
+    )
+
+
+@app.post("/api/messages/read")
+async def message_read(req: Request):
+    client = require_auth()
+    body = await req.json()
+    conversation_uid = (body.get("conversation_uid") or "").strip() or None
+    other_user_id = (body.get("other_user_id") or "").strip() or None
+    send_receipt = bool(body.get("send_read_receipt", True))
+    if not conversation_uid and not other_user_id:
+        raise HTTPException(
+            status_code=422, detail="Thiếu conversation_uid hoặc other_user_id."
+        )
+    return run_lib(
+        lambda: client.chat.mark_as_read(
+            conversation_uid=conversation_uid,
+            other_user_id=other_user_id,
+            send_read_receipt=send_receipt,
+        )
+    )
+
+
+@app.websocket("/api/chat/ws")
+async def chat_ws(websocket: WebSocket, other_user_id: str):
+    """Cầu nối WebSocket: chuyển tiếp tin nhắn thời gian thực từ Locket về trình duyệt."""
+    client = get_client()
+    if not client.is_authenticated():
+        await websocket.close(code=4401)
+        return
+    await websocket.accept()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _on_message(msg):
+        try:
+            queue.put_nowait(msg)
+        except Exception:
+            pass
+
+    async def _pump():
+        while True:
+            msg = await queue.get()
+            await websocket.send_json({"type": "message", "data": msg})
+
+    async def _listen():
+        await client.chat.listen_realtime(other_user_id, _on_message)
+
+    tasks = [asyncio.create_task(_pump()), asyncio.create_task(_listen())]
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        for t in tasks:
+            t.cancel()
 
 
 # ---------------------------------------------------------------------------

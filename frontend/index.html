@@ -46,8 +46,12 @@
     <section id="view-feed" class="view">
       <div class="feed-head">
         <h2>Khoảnh khắc</h2>
-        <button class="btn-ghost" id="feed-refresh">↻ Làm mới</button>
+        <div>
+          <button class="btn-ghost" id="rollcall-btn">🎉 Rollcall</button>
+          <button class="btn-ghost" id="feed-refresh">↻ Làm mới</button>
+        </div>
       </div>
+      <div id="rollcall-strip" class="rollcall-strip hidden"></div>
       <div id="feed-list" class="feed-list"></div>
       <p class="empty hidden" id="feed-empty">Chưa có khoảnh khắc nào. Hãy là người đầu tiên đăng nhé!</p>
     </section>
@@ -83,6 +87,14 @@
         <label class="check-field"><input type="checkbox" id="post-custom-colors"> Tự phối màu</label>
       </div>
       <label class="check-field block"><input type="checkbox" id="post-private"> Chỉ gửi cho chính mình</label>
+      <div class="field">
+        <span>Hoặc chỉ gửi cho một số bạn (để trống = gửi tất cả)</span>
+        <div id="post-recipients" class="recipients-box"></div>
+      </div>
+      <div class="field">
+        <span>Bộ lọc máy ảnh của Locket</span>
+        <div id="filters-box" class="chips-box"><span class="muted-note">Đang tải…</span></div>
+      </div>
       <button class="btn-gold" id="post-submit">Gửi tới bạn bè</button>
       <p class="form-error" id="post-error"></p>
       <p class="ok-msg" id="post-ok"></p>
@@ -97,10 +109,20 @@
       </form>
       <p class="form-error" id="friend-error"></p>
       <p class="ok-msg" id="friend-ok"></p>
+      <div id="invite-box" class="invite-box hidden"></div>
       <h3 class="sub-head hidden" id="requests-head">Lời mời đang chờ</h3>
       <div id="requests-list" class="people-list"></div>
+      <h3 class="sub-head hidden" id="groups-head">Nhóm của tôi</h3>
+      <div id="groups-list" class="people-list"></div>
       <h3 class="sub-head">Tất cả bạn bè</h3>
       <div id="friends-list" class="people-list"></div>
+      <h3 class="sub-head">Gợi ý bạn bè từ danh bạ</h3>
+      <div class="field">
+        <span>Mỗi dòng một số điện thoại (định dạng quốc tế, ví dụ +84…)</span>
+        <textarea id="suggest-phones" rows="3" class="text-area" placeholder="+84901234567"></textarea>
+      </div>
+      <button class="btn-ghost" id="suggest-btn">Tìm gợi ý bạn bè</button>
+      <div id="suggest-list" class="people-list" style="margin-top:10px"></div>
     </section>
 
     <!-- TIN NHẮN -->
@@ -110,6 +132,8 @@
       <div id="chat-box" class="chat-box hidden">
         <button class="btn-ghost" id="chat-back">← Quay lại</button>
         <h3 id="chat-title"></h3>
+        <label class="check-field"><input type="checkbox" id="chat-ghost"> Chế độ ẩn danh (đọc mà không báo đã xem)</label>
+        <div id="chat-live" class="chat-live hidden">● Đang nghe tin nhắn trực tiếp</div>
         <div id="chat-messages" class="chat-messages"></div>
         <form id="chat-form" class="inline-form">
           <input type="text" id="chat-input" placeholder="Nhắn gì đó…">
@@ -138,6 +162,16 @@
       <label class="btn-ghost file-btn">Đổi ảnh đại diện
         <input type="file" id="avatar-file" accept="image/*" class="hidden">
       </label>
+      <form id="birthdate-form" class="two-col" style="grid-template-columns:1fr auto">
+        <input type="date" id="edit-birthdate">
+        <button class="btn-ghost" type="submit">Lưu ngày sinh</button>
+      </form>
+      <div class="btn-row">
+        <button class="btn-ghost" id="session-sync-btn">Đồng bộ cài đặt</button>
+        <button class="btn-ghost" id="session-refresh-btn">Làm mới phiên đăng nhập</button>
+        <button class="btn-ghost" id="device-auto-btn">Đổi thiết bị giả lập</button>
+      </div>
+      <p id="device-info" class="muted-note"></p>
       <p class="ok-msg" id="me-ok"></p>
       <p class="form-error" id="me-error"></p>
       <h3 class="sub-head">Khoảnh khắc của tôi</h3>

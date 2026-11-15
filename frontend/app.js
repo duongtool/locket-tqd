@@ -10,9 +10,13 @@ const state = {
   friendByUid: {},
   currentChatUid: null,
   currentChatName: "",
+  currentConversationId: null,
+  chatSocket: null,
+  chatReactions: [],
   postFile: null,
   postKind: null,
   presets: [],
+  filtersLoaded: false,
 };
 
 async function api(path, options = {}) {
@@ -66,9 +70,10 @@ function showView(name) {
     $(`#view-${v}`).classList.toggle("hidden", v !== name));
   $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
   if (name === "feed") loadFeed();
+  if (name === "post") { loadFilters(); renderRecipients(); }
   if (name === "friends") loadFriends();
   if (name === "chat") loadConversations();
-  if (name === "me") loadMe();
+  if (name === "me") { loadMe(); loadDevice(); }
 }
 $$(".nav-btn").forEach((b) => b.addEventListener("click", () => showView(b.dataset.nav)));
 $("#me-chip").addEventListener("click", () => showView("me"));
@@ -77,10 +82,7 @@ $("#me-chip").addEventListener("click", () => showView("me"));
 async function checkStatus() {
   try {
     const st = await api("/api/status");
-    if (st.authenticated) {
-      await afterLogin();
-      return;
-    }
+    if (st.authenticated) { await afterLogin(); return; }
   } catch { /* rơi xuống màn hình đăng nhập */ }
   $("#login-view").classList.remove("hidden");
   $("#app").classList.add("hidden");
@@ -133,6 +135,7 @@ $("#login-form").addEventListener("submit", async (e) => {
 });
 
 $("#logout-btn").addEventListener("click", async () => {
+  closeChatSocket();
   await apiJson("/api/logout", {});
   location.reload();
 });
@@ -150,9 +153,7 @@ function captionPillHtml(m) {
     textColor = d.text_color || ov.text_color || "#fff";
   }
   if (!text && !icon) return "";
-  const bg = colors && colors.length
-    ? `background:linear-gradient(90deg,${colors.join(",")});`
-    : "";
+  const bg = colors && colors.length ? `background:linear-gradient(90deg,${colors.join(",")});` : "";
   return `<div class="caption-pill" style="${bg}color:${esc(textColor)}">${esc(icon)} ${esc(text)}</div>`;
 }
 
@@ -161,6 +162,8 @@ function momentCard(m) {
   const media = m.video_url
     ? `<video src="${esc(m.video_url)}" poster="${esc(m.thumbnail_url || "")}" controls playsinline></video>`
     : `<img src="${esc(m.thumbnail_url || "")}" alt="" loading="lazy">`;
+  const viewsLine = m.views_count != null
+    ? `<div class="moment-views">👀 ${esc(m.views_count)} lượt xem</div>` : "";
   const el = document.createElement("article");
   el.className = "moment-card";
   el.innerHTML = `
@@ -171,7 +174,10 @@ function momentCard(m) {
     <div class="moment-media">${media}${captionPillHtml(m)}</div>
     <div class="moment-actions">
       ${["❤️", "🔥", "🥰", "🥳", "🥺"].map((e) => `<button class="react-btn" data-react="${e}">${e}</button>`).join("")}
+      <button class="react-btn" data-share title="Chia sẻ vào tin nhắn">↗️</button>
     </div>
+    <div class="share-picker hidden"></div>
+    ${viewsLine}
     <form class="moment-comment">
       <input type="text" placeholder="Bình luận…" maxlength="200">
       <button type="submit" title="Gửi bình luận">💬</button>
@@ -183,6 +189,25 @@ function momentCard(m) {
         toast(`Đã thả ${b.dataset.react}`);
       } catch (ex) { toast(ex.message); }
     }));
+  const picker = el.querySelector(".share-picker");
+  el.querySelector("[data-share]").addEventListener("click", () => {
+    picker.classList.toggle("hidden");
+    if (picker.innerHTML) return;
+    if (!state.friends.length) { picker.innerHTML = `<span class="muted-note">Chưa có bạn bè để chia sẻ.</span>`; return; }
+    state.friends.forEach((f) => {
+      const b = document.createElement("button");
+      b.className = "chip";
+      b.textContent = fullName(f);
+      b.addEventListener("click", async () => {
+        try {
+          await apiJson("/api/messages/send-moment", { receiver_uid: f.uid, moment_uid: m.id });
+          toast(`Đã chia sẻ tới ${fullName(f)} 💛`);
+          picker.classList.add("hidden");
+        } catch (ex) { toast(ex.message); }
+      });
+      picker.appendChild(b);
+    });
+  });
   el.querySelector(".moment-comment").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const input = ev.target.querySelector("input");
@@ -196,8 +221,11 @@ function momentCard(m) {
       toast("Đã gửi bình luận 💬");
     } catch (ex) { toast(ex.message); }
   });
-  const img = el.querySelector(".moment-media img");
-  if (img) img.addEventListener("click", () => openLightbox(m.thumbnail_url, null));
+  const mediaEl = el.querySelector(".moment-media img, .moment-media video");
+  if (mediaEl) mediaEl.addEventListener("click", () => {
+    apiJson("/api/moments/viewed", { moment_uid: m.id }).catch(() => {});
+    openLightbox(m.thumbnail_url, m.video_url);
+  });
   return el;
 }
 
@@ -210,11 +238,32 @@ async function loadFeed() {
     const items = data.items || [];
     if (!items.length) $("#feed-empty").classList.remove("hidden");
     items.forEach((m) => list.appendChild(momentCard(m)));
-  } catch (ex) {
-    toast(ex.message);
-  }
+  } catch (ex) { toast(ex.message); }
 }
 $("#feed-refresh").addEventListener("click", loadFeed);
+
+$("#rollcall-btn").addEventListener("click", async () => {
+  const strip = $("#rollcall-strip");
+  if (!strip.classList.contains("hidden")) { strip.classList.add("hidden"); return; }
+  strip.innerHTML = `<span class="muted-note">Đang tải Rollcall tuần này…</span>`;
+  strip.classList.remove("hidden");
+  try {
+    const data = await api("/api/rollcall");
+    const items = data.items || [];
+    strip.innerHTML = items.length ? "" : `<span class="muted-note">Tuần này chưa có bài Rollcall nào.</span>`;
+    items.forEach((m) => {
+      const author = m.user || state.friendByUid[m.user_uid] || {};
+      const cell = document.createElement("div");
+      cell.className = "rc-cell";
+      cell.innerHTML = `${m.video_url
+        ? `<video src="${esc(m.video_url)}" poster="${esc(m.thumbnail_url || "")}" muted playsinline></video>`
+        : `<img src="${esc(m.thumbnail_url || "")}" alt="">`}
+        <div class="rc-name">${esc(fullName(author))}</div>`;
+      cell.addEventListener("click", () => openLightbox(m.thumbnail_url, m.video_url));
+      strip.appendChild(cell);
+    });
+  } catch (ex) { strip.innerHTML = `<span class="muted-note">${esc(ex.message)}</span>`; }
+});
 
 /* ================= Đăng bài ================= */
 async function loadPresets() {
@@ -241,6 +290,32 @@ async function loadPresets() {
     });
     sel.value = "standard";
   } catch { /* không có preset vẫn đăng được */ }
+}
+
+async function loadFilters() {
+  if (state.filtersLoaded) return;
+  state.filtersLoaded = true;
+  const box = $("#filters-box");
+  try {
+    const data = await api("/api/filters");
+    const raw = data && (data.filters || data.data || data);
+    const arr = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? Object.values(raw) : []);
+    const names = arr.map((f) => (typeof f === "string" ? f : f.name || f.id || f.title)).filter(Boolean);
+    box.innerHTML = names.length
+      ? names.slice(0, 40).map((n) => `<span class="chip">${esc(n)}</span>`).join("")
+      : `<span class="muted-note">Không lấy được danh sách bộ lọc.</span>`;
+  } catch { box.innerHTML = `<span class="muted-note">Không lấy được danh sách bộ lọc.</span>`; }
+}
+
+async function renderRecipients() {
+  const box = $("#post-recipients");
+  if (!state.friends.length) {
+    try { await loadFriends(true); } catch { /* bỏ qua */ }
+  }
+  box.innerHTML = state.friends.length
+    ? state.friends.map((f) =>
+        `<label class="check-field"><input type="checkbox" value="${esc(f.uid)}" class="recipient-check"> ${esc(fullName(f))}</label>`).join("")
+    : `<span class="muted-note">Chưa có bạn bè.</span>`;
 }
 
 function currentPreset() {
@@ -298,7 +373,12 @@ $("#post-submit").addEventListener("click", async () => {
     fd.append("colors", JSON.stringify([$("#post-color1").value, $("#post-color2").value]));
     fd.append("text_color", $("#post-textcolor").value);
   }
-  fd.append("is_private", $("#post-private").checked ? "true" : "false");
+  const isPrivate = $("#post-private").checked;
+  fd.append("is_private", isPrivate ? "true" : "false");
+  if (!isPrivate) {
+    const chosen = $$(".recipient-check").filter((c) => c.checked).map((c) => c.value);
+    if (chosen.length) fd.append("recipients", JSON.stringify(chosen));
+  }
   const btn = $("#post-submit");
   btn.disabled = true;
   btn.textContent = state.postKind === "video" ? "Đang nén và tải video lên…" : "Đang gửi…";
@@ -311,6 +391,7 @@ $("#post-submit").addEventListener("click", async () => {
     $("#post-preview-video").classList.add("hidden");
     $("#post-placeholder").classList.remove("hidden");
     $("#post-caption").value = "";
+    $$(".recipient-check").forEach((c) => (c.checked = false));
     refreshPostPill();
     showView("feed");
   } catch (ex) {
@@ -322,6 +403,15 @@ $("#post-submit").addEventListener("click", async () => {
 });
 
 /* ================= Bạn bè ================= */
+function personRow(u, actionsHtml) {
+  const row = document.createElement("div");
+  row.className = "person";
+  row.innerHTML = `${avatarHtml(u)}<div class="person-main">
+    <div class="person-name">${esc(fullName(u))}</div>
+    <div class="person-sub">${u.username ? "@" + esc(u.username) : ""}</div></div>${actionsHtml || ""}`;
+  return row;
+}
+
 async function loadFriends(silent = false) {
   try {
     const data = await api("/api/friends");
@@ -331,22 +421,46 @@ async function loadFriends(silent = false) {
     const list = $("#friends-list");
     list.innerHTML = state.friends.length ? "" : `<p class="empty">Chưa có bạn bè nào.</p>`;
     state.friends.forEach((f) => {
-      const row = document.createElement("div");
-      row.className = "person";
-      row.innerHTML = `${avatarHtml(f)}<div class="person-main">
-        <div class="person-name">${esc(fullName(f))}</div>
-        <div class="person-sub">${f.username ? "@" + esc(f.username) : ""}</div></div>
-        <button class="btn-ghost" data-remove="${esc(f.uid)}">Huỷ kết bạn</button>`;
-      row.querySelector("[data-remove]").addEventListener("click", async (ev) => {
-        ev.stopPropagation();
+      const row = personRow(f,
+        `<button class="btn-ghost" data-chat="${esc(f.uid)}">Nhắn tin</button>
+         <button class="btn-ghost" data-remove="${esc(f.uid)}">Huỷ</button>
+         <button class="btn-ghost" data-block="${esc(f.uid)}">Chặn</button>`);
+      row.querySelector("[data-chat]").addEventListener("click", () => { showView("chat"); openChat(f.uid, fullName(f), null); });
+      row.querySelector("[data-remove]").addEventListener("click", async () => {
         if (!confirm(`Huỷ kết bạn với ${fullName(f)}?`)) return;
         try { await apiJson("/api/friends/remove", { user_uid: f.uid }); loadFriends(); }
+        catch (ex) { toast(ex.message); }
+      });
+      row.querySelector("[data-block]").addEventListener("click", async () => {
+        if (!confirm(`Chặn ${fullName(f)}? Locket sẽ tự huỷ kết bạn với người này.`)) return;
+        try { await apiJson("/api/friends/block", { user_uid: f.uid }); toast("Đã chặn"); loadFriends(); }
         catch (ex) { toast(ex.message); }
       });
       list.appendChild(row);
     });
   } catch (ex) { if (!silent) toast(ex.message); }
   loadRequests();
+  loadGroups();
+}
+
+async function loadGroups() {
+  try {
+    const data = await api("/api/groups");
+    const groups = (data && (data.groups || (data.data && data.data.groups))) || [];
+    const head = $("#groups-head"), list = $("#groups-list");
+    list.innerHTML = "";
+    head.classList.toggle("hidden", !groups.length);
+    groups.forEach((g) => {
+      const name = g.name || g.title || g.id || "Nhóm";
+      const members = g.members || g.member_uids || [];
+      const row = document.createElement("div");
+      row.className = "person";
+      row.innerHTML = `<span class="avatar-fallback">👥</span><div class="person-main">
+        <div class="person-name">${esc(name)}</div>
+        <div class="person-sub">${Array.isArray(members) ? members.length + " thành viên" : ""}</div></div>`;
+      list.appendChild(row);
+    });
+  } catch { /* bỏ qua nếu không có nhóm */ }
 }
 
 function extractRequestUsers(payload) {
@@ -372,12 +486,7 @@ async function loadRequests() {
     head.classList.toggle("hidden", !users.length);
     users.forEach((raw) => {
       const u = { uid: raw.uid || raw.id, first_name: raw.first_name || "", last_name: raw.last_name || "", username: raw.username, avatar_url: raw.profile_picture_url || raw.avatar_url };
-      const row = document.createElement("div");
-      row.className = "person";
-      row.innerHTML = `${avatarHtml(u)}<div class="person-main">
-        <div class="person-name">${esc(fullName(u))}</div>
-        <div class="person-sub">${u.username ? "@" + esc(u.username) : "Lời mời kết bạn"}</div></div>
-        <button class="btn-gold small" data-accept="${esc(u.uid)}">Đồng ý</button>`;
+      const row = personRow(u, `<button class="btn-gold small" data-accept="${esc(u.uid)}">Đồng ý</button>`);
       row.querySelector("[data-accept]").addEventListener("click", async () => {
         try { await apiJson("/api/friends/accept", { user_uid: u.uid }); toast("Đã kết bạn 💛"); loadFriends(); }
         catch (ex) { toast(ex.message); }
@@ -398,11 +507,37 @@ $("#add-friend-form").addEventListener("submit", async (e) => {
     ok.textContent = `Đã gửi lời mời kết bạn tới @${username}`;
     $("#add-friend-username").value = "";
   } catch (ex) { err.textContent = ex.message; }
+  try {
+    const inv = await api(`/api/invite/${encodeURIComponent(username)}`);
+    const box = $("#invite-box");
+    box.innerHTML = `Link Locket công khai của @${esc(username)}: <a href="${esc(inv.link)}" target="_blank" rel="noopener">${esc(inv.link)}</a>`;
+    box.classList.remove("hidden");
+  } catch { /* bỏ qua nếu không phân giải được link */ }
+});
+
+$("#suggest-btn").addEventListener("click", async () => {
+  const phones = $("#suggest-phones").value.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
+  const list = $("#suggest-list");
+  list.innerHTML = `<p class="empty">Đang tìm…</p>`;
+  try {
+    const data = await apiJson("/api/friends/suggest", { phone_contacts: phones });
+    const items = data.items || [];
+    list.innerHTML = items.length ? "" : `<p class="empty">Không tìm thấy gợi ý nào.</p>`;
+    items.forEach((u) => {
+      const row = personRow(u, `<button class="btn-gold small" data-add="${esc(u.uid)}">Kết bạn</button>`);
+      row.querySelector("[data-add]").addEventListener("click", async () => {
+        try { await apiJson("/api/friends/request", { user_uid: u.uid }); toast("Đã gửi lời mời 💛"); }
+        catch (ex) { toast(ex.message); }
+      });
+      list.appendChild(row);
+    });
+  } catch (ex) { list.innerHTML = `<p class="empty">${esc(ex.message)}</p>`; }
 });
 
 /* ================= Tin nhắn ================= */
 function convOtherUid(c) {
   if (!c || typeof c !== "object") return null;
+  if (c.peer_uid) return c.peer_uid;
   const meUid = state.me && state.me.uid;
   const parts = c.participants || c.participant_uids || c.members || [];
   if (Array.isArray(parts) && parts.length) {
@@ -422,6 +557,7 @@ function convLastText(c) {
 }
 
 async function loadConversations() {
+  closeChatSocket();
   $("#chat-box").classList.add("hidden");
   const list = $("#conv-list");
   list.classList.remove("hidden");
@@ -435,10 +571,14 @@ async function loadConversations() {
       const row = document.createElement("button");
       row.className = "person";
       const f = state.friendByUid[otherUid];
+      const badge = c.unread_count ? ` <span class="chip">${esc(c.unread_count)} chưa đọc</span>` : "";
       row.innerHTML = `${avatarHtml(f || {})}<div class="person-main">
-        <div class="person-name">${esc(convTitle(c, otherUid))}</div>
+        <div class="person-name">${esc(convTitle(c, otherUid))}${badge}</div>
         <div class="person-sub">${esc(convLastText(c))}</div></div>`;
-      row.addEventListener("click", () => { if (otherUid) openChat(otherUid, convTitle(c, otherUid)); else toast("Chưa rõ người trò chuyện"); });
+      row.addEventListener("click", () => {
+        if (otherUid) openChat(otherUid, convTitle(c, otherUid), c.conversation_id || null);
+        else toast("Chưa rõ người trò chuyện");
+      });
       list.appendChild(row);
     });
     if (!items.length && state.friends.length) {
@@ -448,20 +588,85 @@ async function loadConversations() {
         row.innerHTML = `${avatarHtml(f)}<div class="person-main">
           <div class="person-name">${esc(fullName(f))}</div>
           <div class="person-sub">Bắt đầu trò chuyện</div></div>`;
-        row.addEventListener("click", () => openChat(f.uid, fullName(f)));
+        row.addEventListener("click", () => openChat(f.uid, fullName(f), null));
         list.appendChild(row);
       });
     }
   } catch (ex) { toast(ex.message); }
 }
 
-async function openChat(uid, name) {
+async function ensureChatReactions() {
+  if (state.chatReactions.length) return;
+  try {
+    const data = await api("/api/chat/reactions");
+    state.chatReactions = data.items || [];
+  } catch { state.chatReactions = ["❤️", "🔥", "🥰", "😂", "🥺", "👍"]; }
+}
+
+function appendMessage(m) {
+  const box = $("#chat-messages");
+  const meUid = state.me && state.me.uid;
+  const sender = m.sender || m.sender_uid || m.from || "";
+  const text = m.text || m.body || m.message || "";
+  const mid = m.message_id || m.id || m.uid || "";
+  if (mid && box.querySelector(`[data-mid="${CSS.escape(mid)}"]`)) return;
+  const wrap = document.createElement("div");
+  const reactions = m.reactions || m.reaction || null;
+  const reactionHtml = reactions
+    ? `<span class="msg-reaction">${esc(Array.isArray(reactions) ? reactions.map((r) => r.emoji || r.reaction || r).join(" ") : reactions.emoji || reactions)}</span>` : "";
+  wrap.innerHTML = `<div class="bubble${sender && meUid && sender === meUid ? " mine" : ""}" data-mid="${esc(mid)}">${esc(text)}${reactionHtml}</div>
+    <div class="msg-actions hidden"></div>`;
+  const bubble = wrap.querySelector(".bubble");
+  const actions = wrap.querySelector(".msg-actions");
+  bubble.addEventListener("click", async () => {
+    const willShow = actions.classList.contains("hidden");
+    $$(".msg-actions").forEach((a) => a.classList.add("hidden"));
+    if (!willShow) return;
+    await ensureChatReactions();
+    actions.innerHTML = "";
+    state.chatReactions.slice(0, 8).forEach((emoji) => {
+      const b = document.createElement("button");
+      b.textContent = emoji;
+      b.addEventListener("click", async () => {
+        const convId = state.currentConversationId || m.conversation_id;
+        if (!convId || !mid) { toast("Chưa rõ mã cuộc trò chuyện"); return; }
+        try { await apiJson("/api/messages/reaction", { conversation_id: convId, message_id: mid, emoji }); toast(`Đã thả ${emoji}`); actions.classList.add("hidden"); }
+        catch (ex) { toast(ex.message); }
+      });
+      actions.appendChild(b);
+    });
+    if (sender && meUid && sender === meUid) {
+      const del = document.createElement("button");
+      del.textContent = "🗑 Thu hồi";
+      del.addEventListener("click", async () => {
+        const convId = state.currentConversationId || m.conversation_id;
+        if (!convId || !mid) { toast("Chưa rõ mã tin nhắn"); return; }
+        try { await apiJson("/api/messages/delete", { conversation_uid: convId, message_uid: mid }); wrap.remove(); toast("Đã thu hồi tin nhắn"); }
+        catch (ex) { toast(ex.message); }
+      });
+      actions.appendChild(del);
+    }
+    actions.classList.remove("hidden");
+  });
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function openChat(uid, name, conversationId) {
   state.currentChatUid = uid;
   state.currentChatName = name;
+  state.currentConversationId = conversationId || null;
   $("#conv-list").classList.add("hidden");
   $("#chat-box").classList.remove("hidden");
   $("#chat-title").textContent = name;
+  const ghost = $("#chat-ghost").checked;
+  apiJson("/api/messages/read", {
+    other_user_id: uid,
+    conversation_uid: conversationId || undefined,
+    send_read_receipt: !ghost,
+  }).catch(() => {});
   await loadMessages();
+  connectChatSocket(uid);
 }
 $("#chat-back").addEventListener("click", loadConversations);
 
@@ -471,18 +676,44 @@ async function loadMessages() {
   try {
     const data = await api(`/api/messages?other_user_id=${encodeURIComponent(state.currentChatUid)}`);
     const items = data.items || [];
-    const meUid = state.me && state.me.uid;
     items.forEach((m) => {
-      const sender = m.sender || m.sender_uid || m.from || "";
-      const text = m.text || m.body || m.message || "";
-      if (!text) return;
-      const b = document.createElement("div");
-      b.className = "bubble" + (sender && meUid && sender === meUid ? " mine" : "");
-      b.textContent = text;
-      box.appendChild(b);
+      if (!state.currentConversationId && m.conversation_id) state.currentConversationId = m.conversation_id;
+      if (m.text || m.body || m.message) appendMessage(m);
     });
     box.scrollTop = box.scrollHeight;
   } catch (ex) { toast(ex.message); }
+}
+
+function closeChatSocket() {
+  if (state.chatSocket) {
+    try { state.chatSocket.close(); } catch { /* ignore */ }
+    state.chatSocket = null;
+  }
+  const live = $("#chat-live");
+  if (live) live.classList.add("hidden");
+}
+
+function connectChatSocket(uid) {
+  closeChatSocket();
+  try {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${location.host}/api/chat/ws?other_user_id=${encodeURIComponent(uid)}`);
+    state.chatSocket = ws;
+    ws.onopen = () => $("#chat-live").classList.remove("hidden");
+    ws.onclose = () => $("#chat-live").classList.add("hidden");
+    ws.onerror = () => $("#chat-live").classList.add("hidden");
+    ws.onmessage = (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        const m = payload.data || payload;
+        if (m && (m.text || m.body)) appendMessage(m);
+      } catch { /* bỏ qua gói lạ */ }
+    };
+    const ping = setInterval(() => {
+      if (ws.readyState === 1) ws.send("ping");
+      else clearInterval(ping);
+    }, 25000);
+  } catch { /* không có trực tiếp vẫn xem được tin cũ */ }
 }
 
 $("#chat-form").addEventListener("submit", async (e) => {
@@ -493,11 +724,24 @@ $("#chat-form").addEventListener("submit", async (e) => {
   try {
     await apiJson("/api/messages/send", { receiver_uid: state.currentChatUid, text });
     input.value = "";
-    loadMessages();
+    appendMessage({ sender: state.me && state.me.uid, text, message_id: "tmp" + Date.now() });
   } catch (ex) { toast(ex.message); }
 });
 
 /* ================= Trang cá nhân ================= */
+async function loadDevice() {
+  try {
+    const data = await api("/api/device");
+    const d = data.device || {};
+    $("#device-info").textContent = d.model_name
+      ? `Thiết bị giả lập hiện tại: ${d.model_name}${d.ios_version ? " · iOS " + d.ios_version : ""}`
+      : "";
+    if (state.me && !$("#edit-birthdate").value && state.me.raw && state.me.raw.birthdate) {
+      $("#edit-birthdate").value = String(state.me.raw.birthdate).slice(0, 10);
+    }
+  } catch { /* bỏ qua */ }
+}
+
 async function loadMe() {
   try {
     state.me = await api("/api/me");
@@ -552,6 +796,16 @@ $("#name-form").addEventListener("submit", async (e) => {
   } catch (ex) { $("#me-error").textContent = ex.message; }
 });
 
+$("#birthdate-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const v = $("#edit-birthdate").value;
+  if (!v) return;
+  try {
+    await apiJson("/api/profile/birthdate", { birthdate: v });
+    $("#me-ok").textContent = "Đã cập nhật ngày sinh.";
+  } catch (ex) { $("#me-error").textContent = ex.message; }
+});
+
 $("#avatar-file").addEventListener("change", async (e) => {
   const f = e.target.files[0];
   if (!f) return;
@@ -561,6 +815,22 @@ $("#avatar-file").addEventListener("change", async (e) => {
     await api("/api/profile/avatar", { method: "POST", body: fd });
     $("#me-ok").textContent = "Đã đổi ảnh đại diện.";
     loadMe();
+  } catch (ex) { $("#me-error").textContent = ex.message; }
+});
+
+$("#session-sync-btn").addEventListener("click", async () => {
+  try { await apiJson("/api/session/sync", {}); $("#me-ok").textContent = "Đã đồng bộ cài đặt với Locket."; }
+  catch (ex) { $("#me-error").textContent = ex.message; }
+});
+$("#session-refresh-btn").addEventListener("click", async () => {
+  try { await apiJson("/api/session/refresh", {}); $("#me-ok").textContent = "Đã làm mới phiên đăng nhập."; }
+  catch (ex) { $("#me-error").textContent = ex.message; }
+});
+$("#device-auto-btn").addEventListener("click", async () => {
+  try {
+    await apiJson("/api/device/auto", { auto_emulate: true });
+    $("#me-ok").textContent = "Đã đổi sang thiết bị giả lập mới.";
+    loadDevice();
   } catch (ex) { $("#me-error").textContent = ex.message; }
 });
 

@@ -61,11 +61,22 @@ locket-tqd/
 | GET | `/api/status` | Trạng thái đăng nhập |
 | GET | `/api/me` | Hồ sơ của tôi |
 | POST | `/api/profile/name` | Đổi họ tên |
+| POST | `/api/profile/birthdate` | Đổi ngày sinh `{birthdate}` (YYYY-MM-DD) |
 | POST | `/api/profile/avatar` | Đổi ảnh đại diện (multipart `file`) |
+| GET | `/api/users/by-username/{username}` | Tra hồ sơ theo username |
+| GET | `/api/users/by-uid/{uid}` | Tra hồ sơ theo UID |
+| GET | `/api/users/by-uid/{uid}/moments` | Khoảnh khắc của một người theo UID |
+| GET | `/api/device` | Thông tin thiết bị giả lập hiện tại |
+| POST | `/api/device/auto` | Đổi thiết bị giả lập tự động `{auto_emulate}` |
+| POST | `/api/session/refresh` | Làm mới token phiên đăng nhập |
+| POST | `/api/session/sync` | Đồng bộ cài đặt + token thông báo với Locket |
 | GET | `/api/feed` | Feed khoảnh khắc mới nhất |
-| GET | `/api/my-moments` | Khoảnh khắc của tôi |
+| GET | `/api/my-moments` | Khoảnh khắc của tôi (hỗ trợ `limit`, `start_date`, `end_date`) |
 | GET | `/api/users/{username}/moments` | Khoảnh khắc của một người dùng |
-| POST | `/api/post` | Đăng bài (multipart: `image`/`video`, `caption`, `note_type`, `icon`, `colors`, `text_color`, `is_private`) |
+| GET | `/api/filters` | Danh sách bộ lọc máy ảnh của Locket |
+| GET | `/api/rollcall` | Bài đăng Rollcall tuần này (`week`, `year`) |
+| POST | `/api/moments/viewed` | Đánh dấu đã xem `{moment_uid}` |
+| POST | `/api/post` | Đăng bài (multipart: `image`/`video`, `caption`, `note_type`, `icon`, `colors`, `text_color`, `is_private`, `recipients` dạng JSON) |
 | POST | `/api/react` | Thả cảm xúc `{moment_uid, reaction}` |
 | POST | `/api/comment` | Bình luận `{moment_uid, receiver_uid, text}` |
 | GET | `/api/moments/{id}/views` | Lượt xem và cảm xúc của một bài |
@@ -73,12 +84,34 @@ locket-tqd/
 | GET | `/api/presets` | 158 kiểu nhãn chú thích |
 | GET | `/api/friends` | Danh sách bạn bè |
 | GET | `/api/friend-requests` | Lời mời kết bạn |
+| GET | `/api/groups` | Nhóm và bạn bè |
 | POST | `/api/friends/request` | Gửi lời mời `{username}` hoặc `{user_uid}` |
 | POST | `/api/friends/accept` | Đồng ý lời mời `{user_uid}` |
 | POST | `/api/friends/remove` | Huỷ kết bạn `{user_uid}` |
+| POST | `/api/friends/block` | Chặn người dùng `{user_uid}` |
+| POST | `/api/friends/unblock` | Bỏ chặn `{user_uid}` |
+| POST | `/api/friends/suggest` | Gợi ý bạn bè từ danh bạ `{phone_contacts: [...]}` |
+| GET | `/api/invite/{username}` | Link mời công khai `locket.cam/<username>` + hồ sơ |
 | GET | `/api/conversations` | Danh sách cuộc trò chuyện |
 | GET | `/api/messages?other_user_id=` | Tin nhắn với một người |
 | POST | `/api/messages/send` | Gửi tin nhắn `{receiver_uid, text}` |
+| POST | `/api/messages/send-moment` | Chia sẻ khoảnh khắc vào chat `{receiver_uid, moment_uid, text?}` |
+| GET | `/api/chat/reactions` | Bảng biểu cảm chính thức cho tin nhắn |
+| POST | `/api/messages/reaction` | Thả cảm xúc vào tin nhắn `{conversation_id, message_id, emoji}` |
+| POST | `/api/messages/reaction/remove` | Gỡ cảm xúc khỏi tin nhắn |
+| POST | `/api/messages/delete` | Thu hồi tin nhắn `{conversation_uid, message_uid}` |
+| POST | `/api/messages/read` | Đánh dấu đã đọc, hỗ trợ ẩn danh `{send_read_receipt: false}` |
+| WS | `/api/chat/ws?other_user_id=` | Luồng tin nhắn thời gian thực (WebSocket) |
+
+## Kiểm thử
+
+Có bộ kiểm thử khói tự động chạy toàn bộ endpoint bằng client giả lập
+(không cần tài khoản Locket thật):
+
+```bash
+.venv/bin/pip install httpx
+.venv/bin/python tests/smoke_test.py
+```
 
 ## Lưu ý
 
