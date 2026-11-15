@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Locket Tqd - Backend Server
-Khai thác full locketlam SDK — auto_compress H.265 cho video > 6MB
+Video: pre-compress < 5.5MB + locketlam auto_compress
 """
 
 import os
@@ -23,7 +23,7 @@ try:
         LocketError,
     )
 except ImportError:
-    print("Chưa cài locketlam! pip install locketlam flask flask-cors gunicorn")
+    print("Chua cai locketlam!")
     raise
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -40,6 +40,8 @@ os.makedirs(SESSION_DIR, exist_ok=True)
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+MAX_VIDEO_BYTES = 6 * 1024 * 1024
+
 
 def get_client():
     sid = session.get("sid")
@@ -53,20 +55,22 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         client = get_client()
         if not client or not client.is_authenticated():
-            return jsonify({"ok": False, "error": "Chưa đăng nhập"}), 401
+            return jsonify({"ok": False, "error": "Chua dang nhap"}), 401
         return f(client, *args, **kwargs)
     return decorated
 
 
-def extract_thumbnail(video_path: str) -> str:
-    """Cắt 1 frame từ video làm thumbnail JPG (dự phòng)."""
-    out_path = os.path.join(UPLOAD_DIR, f"thumb_{uuid.uuid4().hex}.jpg")
-    ffmpeg_bin = "ffmpeg"
+def get_ffmpeg():
     try:
         import imageio_ffmpeg
-        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+        return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
-        pass
+        return "ffmpeg"
+
+
+def extract_thumbnail(video_path: str) -> str:
+    out_path = os.path.join(UPLOAD_DIR, f"thumb_{uuid.uuid4().hex}.jpg")
+    ffmpeg_bin = get_ffmpeg()
     for ss in ("0.5", "0"):
         cmd = [ffmpeg_bin, "-y", "-ss", ss, "-i", video_path, "-frames:v", "1", "-q:v", "3", out_path]
         try:
@@ -75,7 +79,88 @@ def extract_thumbnail(video_path: str) -> str:
                 return out_path
         except Exception:
             continue
-    raise RuntimeError("Không cắt được thumbnail")
+    raise RuntimeError("Khong cat duoc thumbnail tu video")
+
+
+def compress_video(video_path: str, max_bytes: int = MAX_VIDEO_BYTES) -> str:
+    """Nen video xuong duoi max_bytes. Thu nhieu muc CRF + scale."""
+    ffmpeg_bin = get_ffmpeg()
+    size = os.path.getsize(video_path)
+    if size < max_bytes:
+        return video_path
+
+    out_path = os.path.join(UPLOAD_DIR, f"cmp_{uuid.uuid4().hex}.mp4")
+    attempts = [
+        (720, 28, "veryfast"),
+        (720, 32, "veryfast"),
+        (540, 30, "veryfast"),
+        (540, 34, "veryfast"),
+        (480, 32, "veryfast"),
+        (480, 36, "ultrafast"),
+        (360, 34, "ultrafast"),
+        (360, 38, "ultrafast"),
+        (360, 40, "ultrafast"),
+    ]
+
+    last_err = None
+    for height, crf, preset in attempts:
+        try:
+            cmd = [
+                ffmpeg_bin, "-y", "-i", video_path,
+                "-vf", f"scale=-2:{height}",
+                "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+                "-c:a", "aac", "-b:a", "64k",
+                "-movflags", "+faststart", "-pix_fmt", "yuv420p",
+                out_path,
+            ]
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=180)
+            if os.path.exists(out_path) and 0 < os.path.getsize(out_path) < max_bytes:
+                return out_path
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except Exception:
+                    pass
+        except Exception as e:
+            last_err = e
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except Exception:
+                    pass
+            continue
+
+    # Lan cuoi: bitrate thap + 360p, co the cat 20s
+    try:
+        cmd = [
+            ffmpeg_bin, "-y", "-i", video_path,
+            "-vf", "scale=-2:360",
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-b:v", "700k", "-maxrate", "900k", "-bufsize", "1800k",
+            "-c:a", "aac", "-b:a", "48k",
+            "-movflags", "+faststart", "-pix_fmt", "yuv420p",
+            out_path,
+        ]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=180)
+        if os.path.exists(out_path) and 0 < os.path.getsize(out_path) < max_bytes:
+            return out_path
+        if os.path.exists(out_path) and os.path.getsize(out_path) >= max_bytes:
+            out2 = os.path.join(UPLOAD_DIR, f"cmp2_{uuid.uuid4().hex}.mp4")
+            cmd2 = [ffmpeg_bin, "-y", "-i", out_path, "-t", "20", "-c", "copy", out2]
+            subprocess.run(cmd2, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
+            if os.path.exists(out2):
+                return out2
+    except Exception as e:
+        last_err = e
+
+    raise RuntimeError(
+        f"Khong nen duoc video duoi {max_bytes/(1024*1024):.1f}MB. "
+        f"Goc: {size/(1024*1024):.1f} MB. Loi: {last_err}"
+    )
 
 
 @app.route("/")
@@ -102,7 +187,7 @@ def login():
     email = data.get("email", "").strip()
     password = data.get("password", "")
     if not email or not password:
-        return jsonify({"ok": False, "error": "Thiếu email hoặc mật khẩu"}), 400
+        return jsonify({"ok": False, "error": "Thieu email hoac mat khau"}), 400
     sid = str(uuid.uuid4())
     session_path = os.path.join(SESSION_DIR, f"{sid}.json")
     try:
@@ -123,11 +208,11 @@ def login():
             "profile": profile,
         })
     except AuthenticationError as e:
-        return jsonify({"ok": False, "error": f"Đăng nhập thất bại: {str(e)}"}), 401
+        return jsonify({"ok": False, "error": f"Dang nhap that bai: {str(e)}"}), 401
     except LocketError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": f"Lỗi hệ thống: {str(e)}"}), 500
+        return jsonify({"ok": False, "error": f"Loi he thong: {str(e)}"}), 500
 
 
 @app.route("/api/logout", methods=["POST"])
@@ -193,8 +278,8 @@ def send_friend_request(client):
         elif data.get("uid"):
             client.friends.send_request(user_uid=data["uid"])
         else:
-            return jsonify({"ok": False, "error": "Thiếu username hoặc uid"}), 400
-        return jsonify({"ok": True, "message": "Đã gửi lời mời kết bạn"})
+            return jsonify({"ok": False, "error": "Thieu username hoac uid"}), 400
+        return jsonify({"ok": True, "message": "Da gui loi moi"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
@@ -204,7 +289,7 @@ def send_friend_request(client):
 def accept_friend(client):
     data = request.get_json() or {}
     if not data.get("uid"):
-        return jsonify({"ok": False, "error": "Thiếu uid"}), 400
+        return jsonify({"ok": False, "error": "Thieu uid"}), 400
     try:
         client.friends.accept_request(user_uid=data["uid"])
         return jsonify({"ok": True})
@@ -217,7 +302,7 @@ def accept_friend(client):
 def remove_friend(client):
     data = request.get_json() or {}
     if not data.get("uid"):
-        return jsonify({"ok": False, "error": "Thiếu uid"}), 400
+        return jsonify({"ok": False, "error": "Thieu uid"}), 400
     try:
         client.friends.remove(user_uid=data["uid"])
         return jsonify({"ok": True})
@@ -247,14 +332,11 @@ def moments_by_username(client, username):
 @app.route("/api/moments/post", methods=["POST"])
 @require_auth
 def post_moment(client):
-    """
-    Đăng ảnh/video.
-    Video: auto_compress=True (locketlam nén H.265 nếu >= 6MB),
-    priority=balanced|video|audio.
-    """
+    """Dang anh/video. Video >=5.5MB se duoc nen truoc khi upload."""
     image_path = None
     video_path = None
     thumb_generated = None
+    compressed_path = None
     try:
         caption = request.form.get("caption") or (request.get_json() or {}).get("caption") or ""
         is_private = request.form.get("is_private", "false").lower() == "true"
@@ -292,56 +374,92 @@ def post_moment(client):
                     fh.write(img_data)
 
         if not image_path and not video_path:
-            return jsonify({"ok": False, "error": "Thiếu ảnh hoặc video"}), 400
+            return jsonify({"ok": False, "error": "Thieu anh hoac video"}), 400
 
         original_mb = None
+        did_compress = False
         if video_path:
             original_mb = round(os.path.getsize(video_path) / (1024 * 1024), 2)
+            size_b = os.path.getsize(video_path)
+            SAFE = 5_500_000  # nen som de chac an duoi 6MB
+            if size_b >= SAFE:
+                try:
+                    print(f"[post] compress start {original_mb}MB")
+                    out = compress_video(video_path, max_bytes=SAFE)
+                    if out != video_path:
+                        compressed_path = out
+                        try:
+                            os.remove(video_path)
+                        except Exception:
+                            pass
+                        video_path = out
+                        did_compress = True
+                        new_mb = round(os.path.getsize(video_path) / (1024 * 1024), 2)
+                        print(f"[post] compress done {original_mb}MB -> {new_mb}MB")
+                except Exception as e:
+                    print(f"[post] pre-compress failed: {e}")
+
             if not image_path:
                 try:
                     image_path = extract_thumbnail(video_path)
                     thumb_generated = image_path
-                except Exception:
-                    image_path = None  # locketlam cũng tự cắt thumb từ video
+                except Exception as e:
+                    return jsonify({"ok": False, "error": f"Khong tao duoc thumbnail: {e}"}), 400
+
+            final_size = os.path.getsize(video_path)
+            if final_size >= 6_291_456:
+                mb = final_size / (1024 * 1024)
+                return jsonify({
+                    "ok": False,
+                    "error": (
+                        f"Video sau nen van con {mb:.1f} MB (Locket can < 6 MB). "
+                        "Hay chon video ngan hon."
+                    )
+                }), 400
 
         priority = (request.form.get("priority") or "balanced").lower()
         if priority not in ("video", "audio", "balanced"):
             priority = "balanced"
 
-        kwargs = {
-            "caption": caption,
-            "is_private": is_private,
-            "note_type": note_type,
-        }
+        kwargs = {"caption": caption, "is_private": is_private, "note_type": note_type}
         if icon:
             kwargs["icon"] = icon
         if colors:
             kwargs["colors"] = colors
 
         if video_path:
-            if image_path:
-                kwargs["image"] = image_path
+            kwargs["image"] = image_path
             kwargs["video"] = video_path
-            # Đúng theo docs locketlam: tự nén H.265 nếu >= 6MB
             kwargs["auto_compress"] = True
             kwargs["priority"] = priority
         else:
             kwargs["image"] = image_path
 
         result = client.moments.post(**kwargs)
+        final_mb = None
+        if video_path and os.path.exists(video_path):
+            final_mb = round(os.path.getsize(video_path) / (1024 * 1024), 2)
         return jsonify({
             "ok": True,
             "moment": result,
             "original_size_mb": original_mb,
+            "compressed": did_compress,
+            "final_size_mb": final_mb,
             "auto_compress": bool(video_path),
-            "priority": priority if video_path else None,
         })
     except StorageUploadError as e:
-        return jsonify({"ok": False, "error": f"Upload thất bại: {str(e)}"}), 400
+        return jsonify({"ok": False, "error": f"Upload that bai: {str(e)}"}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        import traceback
+        traceback.print_exc()
+        msg = str(e) or e.__class__.__name__
+        if "6 MB" in msg or "6MB" in msg or "6291456" in msg:
+            msg = "Video vuot gioi han 6 MB cua Locket. Nen chua du — thu video ngan hon."
+        elif "compress" in msg.lower() or "ffmpeg" in msg.lower():
+            msg = f"Nen video that bai: {msg}"
+        return jsonify({"ok": False, "error": msg}), 400
     finally:
-        for p in (image_path, video_path, thumb_generated):
+        for p in (image_path, video_path, thumb_generated, compressed_path):
             if p and os.path.exists(p):
                 try:
                     os.remove(p)
@@ -355,9 +473,9 @@ def react_moment(client):
     data = request.get_json() or {}
     moment_uid = data.get("moment_uid")
     if not moment_uid:
-        return jsonify({"ok": False, "error": "Thiếu moment_uid"}), 400
+        return jsonify({"ok": False, "error": "Thieu moment_uid"}), 400
     try:
-        client.moments.react(moment_uid=moment_uid, reaction=data.get("reaction", "❤️"))
+        client.moments.react(moment_uid=moment_uid, reaction=data.get("reaction", "\u2764\ufe0f"))
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -377,7 +495,7 @@ def moment_views(client, moment_uid):
 def delete_moment(client):
     data = request.get_json() or {}
     if not data.get("moment_uid"):
-        return jsonify({"ok": False, "error": "Thiếu moment_uid"}), 400
+        return jsonify({"ok": False, "error": "Thieu moment_uid"}), 400
     try:
         client.moments.delete(moment_uid=data["moment_uid"])
         return jsonify({"ok": True})
@@ -399,7 +517,7 @@ def conversations(client):
 def messages(client):
     other_uid = request.args.get("uid")
     if not other_uid:
-        return jsonify({"ok": False, "error": "Thiếu uid"}), 400
+        return jsonify({"ok": False, "error": "Thieu uid"}), 400
     try:
         return jsonify({"ok": True, "messages": client.chat.get_messages(other_user_id=other_uid) or []})
     except Exception as e:
@@ -411,7 +529,7 @@ def messages(client):
 def send_message(client):
     data = request.get_json() or {}
     if not data.get("uid"):
-        return jsonify({"ok": False, "error": "Thiếu uid người nhận"}), 400
+        return jsonify({"ok": False, "error": "Thieu uid nguoi nhan"}), 400
     try:
         if data.get("moment_uid"):
             client.chat.send_moment(receiver_uid=data["uid"], moment_uid=data["moment_uid"], text=data.get("text"))
