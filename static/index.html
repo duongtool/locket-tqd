@@ -168,7 +168,7 @@
       document.getElementById(name + '-screen').classList.add('active');
       document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.screen === name));
       if (name==='feed') loadFeed();
-      if (==='friends') loadFriends();
+      if (name==='friends') loadFriends();
       if (name==='chat') loadConversations();
       if (name==='profile') loadProfile();
     }
@@ -282,7 +282,7 @@
       const isVideo = selectedFile.type.startsWith('video/');
       const sizeMB = selectedFile.size / (1024*1024);
       if (isVideo && selectedFile.size >= 6*1024*1024) {
-        return toast(`Video ${sizeMB.toFixed(1)} MB vượt giới hạn 6 MB của Locket. Hãy nén HEVC.`, 'error');
+        return toast('Video ' + sizeMB.toFixed(1) + ' MB vượt giới hạn 6 MB của Locket. Hãy nén HEVC.', 'error');
       }
       const btn = document.getElementById('post-btn');
       const btnText = document.getElementById('post-btn-text');
@@ -294,11 +294,11 @@
       form.append('caption', document.getElementById('caption').value);
       form.append('is_private', document.getElementById('private-toggle').classList.contains('on') ? 'true' : 'false');
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), isVideo ? 180000 : 60000);
+      const timeoutId = setTimeout(function() { controller.abort(); }, isVideo ? 180000 : 60000);
       try {
         const res = await fetch(API + '/api/moments/post', { method: 'POST', body: form, credentials: 'include', signal: controller.signal });
         clearTimeout(timeoutId);
-        const data = await res.json().catch(() => ({}));
+        const data = await res.json().catch(function() { return {}; });
         if (res.status === 401) { showLogin(); throw new Error(data.error || 'Chưa đăng nhập'); }
         if (data.ok) {
           toast('Đăng moment thành công! 🎉', 'success');
@@ -343,10 +343,10 @@
         const p = data.profile || {};
         const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || p.username || 'Bạn';
         const avatar = p.profile_picture_url || p.avatar || '';
-        el.innerHTML = `<div class="profile-hero">${avatar?`<img src="${avatar}" class="profile-avatar"/>`:`<div class="profile-avatar" style="display:flex;align-items:center;justify-content:center;font-size:40px;background:linear-gradient(135deg,var(--gold),#8b5cf6)">${(name[0]||'?').toUpperCase()}</div>`}<div class="profile-name">${esc(name)}</div><div class="profile-username">@${esc(p.username||'—')}</div></div><div class="card"><div style="font-size:13px;color:var(--text-muted);line-height:1.7"><div><b>UID:</b> ${esc(p.uid||currentUser?.uid||'—')}</div><div><b>Email:</b> ${esc(currentUser?.email||'—')}</div></div></div>`;
+        el.innerHTML = `<div class="profile-hero">${avatar?`<img src="${avatar}" class="profile-avatar"/>`:`<div class="profile-avatar" style="display:flex;align-items:center;justify-content:center;font-size:40px;background:linear-gradient(135deg,var(--gold),#8b5cf6)">${(name[0]||'?').toUpperCase()}</div>`}<div class="profile-name">${esc(name)}</div><div class="profile-username">@${esc(p.username||'—')}</div></div><div class="card"><div style="font-size:13px;color:var(--text-muted);line-height:1.7"><div><b>UID:</b> ${esc(p.uid||currentUser&&currentUser.uid||'—')}</div><div><b>Email:</b> ${esc(currentUser&&currentUser.email||'—')}</div></div></div>`;
       } catch (e) { el.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>${esc(e.message)}</p></div>`; }
     }
-    document.getElementById('password').addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
+    document.getElementById('password').addEventListener('keydown', function(e) { if (e.key==='Enter') doLogin(); });
     checkAuth();
   </script>
 </body>
