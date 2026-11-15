@@ -2,13 +2,13 @@
 """
 Locket Tqd - Backend Server
 Khai thác full locketlam SDK (https://github.com/leanhminh2104/locketlam)
+Ready for Render.com deployment
 """
 
 import os
 import json
 import uuid
 import base64
-import tempfile
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, session
 from flask_cors import CORS
@@ -25,19 +25,24 @@ try:
 except ImportError:
     print("=" * 60)
     print("⚠️  Chưa cài locketlam!")
-    print("   Chạy: pip install locketlam flask flask-cors")
+    print("   Chạy: pip install locketlam flask flask-cors gunicorn")
     print("=" * 60)
     raise
 
 app = Flask(__name__, static_folder="static", static_url_path="")
-app.secret_key = os.environ.get("SECRET_KEY", "locket-tqd-secret-key-2026")
+app.secret_key = os.environ.get("SECRET_KEY", "locket-tqd-secret-key-2026-change-me")
+# Production cookie settings for Render (HTTPS)
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("RENDER", "") == "true"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 CORS(app, supports_credentials=True)
 
 # Global client instances keyed by session id (simple in-memory store)
 clients = {}
-SESSION_DIR = os.path.join(os.path.dirname(__file__), "sessions")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SESSION_DIR = os.path.join(BASE_DIR, "sessions")
 os.makedirs(SESSION_DIR, exist_ok=True)
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -268,7 +273,6 @@ def post_moment(client):
         image_path = None
         video_path = None
 
-        # Handle file uploads
         if "image" in request.files:
             f = request.files["image"]
             if f.filename:
@@ -283,7 +287,6 @@ def post_moment(client):
                 video_path = os.path.join(UPLOAD_DIR, fname)
                 f.save(video_path)
 
-        # Fallback JSON base64
         if not image_path and request.is_json:
             data = request.get_json()
             if data.get("image_base64"):
@@ -306,14 +309,13 @@ def post_moment(client):
             kwargs["colors"] = colors
 
         if video_path:
-            kwargs["image"] = image_path  # thumbnail
+            kwargs["image"] = image_path
             kwargs["video"] = video_path
         else:
             kwargs["image"] = image_path
 
         result = client.moments.post(**kwargs)
 
-        # Cleanup temp files
         for p in [image_path, video_path]:
             if p and os.path.exists(p):
                 try:
@@ -416,10 +418,17 @@ def note_types():
     return jsonify({"ok": True, "types": types})
 
 
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "service": "Locket Tqd"})
+
+
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     print("\n" + "=" * 60)
     print("💛  Locket Tqd Server")
-    print("    http://127.0.0.1:5000")
+    print(f"    http://0.0.0.0:{port}")
     print("    Powered by locketlam SDK")
     print("=" * 60 + "\n")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=debug)

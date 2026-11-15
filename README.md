@@ -12,48 +12,49 @@ Web client đẹp lung linh cho **Locket Camera**, khai thác full SDK [locketla
 - Hồ sơ cá nhân
 - UI glassmorphism + animation mượt, mobile-first
 
-## Cài đặt
+## Deploy lên Render.com (khuyến nghị)
+
+1. Vào [render.com](https://render.com) → **New +** → **Web Service**
+2. Connect GitHub repo: `duongtool/locket-tqd`
+3. Cấu hình:
+   - **Name:** `locket-tqd` (hoặc tên bạn muốn)
+   - **Runtime:** Python 3
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `gunicorn server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120`
+   - **Instance Type:** Free
+4. (Tùy chọn) Environment Variables:
+   - `SECRET_KEY` = chuỗi bí mật ngẫu nhiên dài
+5. Click **Create Web Service** → đợi build xong, mở URL Render
+
+> Free tier có thể sleep sau 15 phút không request. Request đầu tiên sẽ chậm ~30s.
+
+## Chạy local
 
 ```bash
-# 1. Cài dependencies
-pip install locketlam flask flask-cors
-
-# 2. Chạy server
-cd /path/to/this/folder
+git clone https://github.com/duongtool/locket-tqd.git
+cd locket-tqd
+pip install -r requirements.txt
 python server.py
 ```
 
-Mở trình duyệt: **http://127.0.0.1:5000**
+Mở: **http://127.0.0.1:5000**
 
 ## Cấu trúc
 
 ```
 .
-├── server.py          # Flask backend (wrap full locketlam API)
-├── static/
-│   └── index.html     # Frontend animation đẹp
-├── sessions/          # Session JSON (auto tạo)
-└── uploads/           # Temp media upload (auto tạo)
+├── server.py          # Flask + gunicorn ready
+├── static/index.html  # Frontend
+├── Procfile           # Render / Heroku
+├── requirements.txt
+├── runtime.txt
+└── README.md
 ```
-
-## API endpoints chính
-
-| Method | Path | Mô tả |
-|--------|------|-------|
-| POST   | `/api/login` | Đăng nhập |
-| POST   | `/api/logout` | Đăng xuất |
-| GET    | `/api/status` | Kiểm tra auth |
-| GET    | `/api/profile` | Hồ sơ |
-| GET    | `/api/friends` | Danh sách bạn |
-| GET    | `/api/feed` | Feed moments |
-| POST   | `/api/moments/post` | Đăng moment |
-| POST   | `/api/moments/react` | Reaction |
-| GET    | `/api/chat/conversations` | Inbox |
 
 ## Powered by
 
 - [locketlam](https://github.com/leanhminh2104/locketlam) — Unofficial Locket Camera Python SDK
-- Flask + modern CSS (glassmorphism, orbs animation)
+- Flask + gunicorn + modern CSS
 
 ## Disclaimer
 
