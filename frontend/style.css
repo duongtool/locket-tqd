@@ -146,6 +146,21 @@ main{flex:1;padding:6px 16px 96px}
 .nav-btn.active{color:var(--gold)}
 .nav-btn.active .nav-ico{filter:none}
 
+/* ---------- Lưới khoảnh khắc kiểu Locket Dio ---------- */
+.feed-toolbar{display:flex;align-items:center;gap:10px;margin:4px 0 12px}
+.feed-filter{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:999px;padding:9px 16px;font-size:14px;font-weight:600;outline:none;cursor:pointer}
+.moments-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;width:min(1120px,96vw);position:relative;left:50%;transform:translateX(-50%)}
+@media(min-width:700px){.moments-grid{grid-template-columns:repeat(4,1fr)}}
+@media(min-width:1024px){.moments-grid{grid-template-columns:repeat(6,1fr)}}
+.grid-cell{position:relative;aspect-ratio:1;border-radius:14px;overflow:hidden;cursor:pointer;background:#17171d;border:none;padding:0}
+.grid-cell img,.grid-cell video{width:100%;height:100%;object-fit:cover;display:block}
+.grid-cell .video-badge{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.55);color:#fff;font-size:11px;border-radius:999px;padding:2px 7px}
+.grid-cell .cell-author{position:absolute;left:0;right:0;bottom:0;padding:14px 8px 6px;font-size:11px;color:#fff;text-align:left;background:linear-gradient(transparent,rgba(0,0,0,.55));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.moment-detail{position:fixed;inset:0;background:rgba(5,5,10,.82);z-index:200;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:22px 12px}
+.moment-detail-box{width:min(430px,94vw)}
+.moment-detail-close{margin-bottom:10px}
+.moment-detail .moment-card{margin-bottom:0}
+
 /* ---------- Bổ sung: Rollcall, gợi ý, chat trực tiếp ---------- */
 .rollcall-strip{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 14px}
 .rollcall-strip .rc-cell{flex:0 0 108px;text-align:center}

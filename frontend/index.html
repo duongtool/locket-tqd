@@ -53,7 +53,13 @@
       </div>
       <label class="check-field" style="margin:0 0 10px"><input type="checkbox" id="ghost-moments"> 🕶 Chặn “đã xem” — xem moment mà không để lại dấu đã xem</label>
       <div id="rollcall-strip" class="rollcall-strip hidden"></div>
-      <div id="feed-list" class="feed-list"></div>
+      <div class="feed-toolbar">
+        <select id="feed-filter" class="feed-filter">
+          <option value="all">Mọi người ▾</option>
+        </select>
+        <span id="feed-count" class="muted-note"></span>
+      </div>
+      <div id="feed-grid" class="moments-grid"></div>
       <p class="empty hidden" id="feed-empty">Chưa có khoảnh khắc nào. Hãy là người đầu tiên đăng nhé!</p>
     </section>
 
@@ -206,6 +212,14 @@
 
 <div id="toast" class="toast hidden"></div>
 <div id="lightbox" class="lightbox hidden"><img id="lightbox-img" alt=""><video id="lightbox-video" controls playsinline class="hidden"></video></div>
+
+<!-- Xem chi tiết một khoảnh khắc -->
+<div id="moment-detail" class="moment-detail hidden">
+  <div class="moment-detail-box">
+    <button class="btn-ghost moment-detail-close" id="moment-detail-close">✕ Đóng</button>
+    <div id="moment-detail-body"></div>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>

@@ -15,6 +15,7 @@ const state = {
   chatReactions: [],
   postFile: null,
   postKind: null,
+  feedItems: [],
   camStream: null,
   camRecorder: null,
   camChunks: [],
@@ -162,7 +163,7 @@ function captionPillHtml(m) {
   return `<div class="caption-pill" style="${bg}color:${esc(textColor)}">${esc(icon)} ${esc(text)}</div>`;
 }
 
-function momentCard(m) {
+function momentCard(m, inDetail = false) {
   const author = m.user || state.friendByUid[m.user_uid] || { uid: m.user_uid };
   const media = m.video_url
     ? `<video src="${esc(m.video_url)}" poster="${esc(m.thumbnail_url || "")}" controls playsinline></video>`
@@ -231,7 +232,7 @@ function momentCard(m) {
     if (!ghostMomentsOn()) {
       apiJson("/api/moments/viewed", { moment_uid: m.id }).catch(() => {});
     }
-    openLightbox(m.thumbnail_url, m.video_url);
+    if (!inDetail) openLightbox(m.thumbnail_url, m.video_url);
   });
   return el;
 }
@@ -251,8 +252,8 @@ function ghostMomentsOn() {
 })();
 
 async function loadFeed() {
-  const list = $("#feed-list");
-  list.innerHTML = `<p class="empty">Đang tải toàn bộ khoảnh khắc…</p>`;
+  const grid = $("#feed-grid");
+  grid.innerHTML = `<p class="empty" style="grid-column:1/-1">Đang tải toàn bộ khoảnh khắc…</p>`;
   $("#feed-empty").classList.add("hidden");
   try {
     let data;
@@ -261,15 +262,77 @@ async function loadFeed() {
     } catch {
       data = await api("/api/feed");
     }
-    const items = data.items || [];
-    list.innerHTML = "";
-    if (!items.length) $("#feed-empty").classList.remove("hidden");
-    items.forEach((m) => list.appendChild(momentCard(m)));
+    state.feedItems = data.items || [];
+    buildFeedFilter();
+    renderFeedGrid();
   } catch (ex) {
-    list.innerHTML = "";
+    grid.innerHTML = "";
     toast(ex.message);
   }
 }
+
+function feedAuthorUid(m) {
+  return m.user_uid || (m.user && m.user.uid) || null;
+}
+
+function buildFeedFilter() {
+  const sel = $("#feed-filter");
+  const prev = sel.value || "all";
+  const seen = new Map();
+  if (state.me && state.me.uid) seen.set(state.me.uid, "Của tôi");
+  state.friends.forEach((f) => { if (f.uid) seen.set(f.uid, fullName(f)); });
+  state.feedItems.forEach((m) => {
+    const uid = feedAuthorUid(m);
+    if (uid && !seen.has(uid)) {
+      const u = m.user || state.friendByUid[uid];
+      seen.set(uid, u ? fullName(u) : "Người dùng Locket");
+    }
+  });
+  const myUid = state.me && state.me.uid;
+  sel.innerHTML = `<option value="all">Mọi người ▾</option>` +
+    [...seen.entries()].map(([uid, name]) =>
+      `<option value="${esc(uid)}">${esc(uid === myUid ? "Của tôi" : name)}</option>`).join("");
+  sel.value = prev === "all" || seen.has(prev) ? prev : "all";
+}
+
+function renderFeedGrid() {
+  const grid = $("#feed-grid");
+  const selVal = $("#feed-filter").value || "all";
+  const items = state.feedItems.filter((m) => selVal === "all" || feedAuthorUid(m) === selVal);
+  $("#feed-count").textContent = items.length ? `${items.length} khoảnh khắc` : "";
+  grid.innerHTML = "";
+  $("#feed-empty").classList.toggle("hidden", items.length > 0);
+  items.forEach((m) => {
+    const author = m.user || state.friendByUid[feedAuthorUid(m)] || {};
+    const cell = document.createElement("button");
+    cell.className = "grid-cell";
+    cell.innerHTML = `${m.video_url
+      ? `<video src="${esc(m.video_url)}" poster="${esc(m.thumbnail_url || "")}" muted playsinline preload="metadata"></video><span class="video-badge">▶ video</span>`
+      : `<img src="${esc(m.thumbnail_url || "")}" alt="" loading="lazy">`}
+      <span class="cell-author">${esc(fullName(author))}</span>`;
+    cell.addEventListener("click", () => openMomentDetail(m));
+    grid.appendChild(cell);
+  });
+}
+$("#feed-filter").addEventListener("change", renderFeedGrid);
+
+function openMomentDetail(m) {
+  const body = $("#moment-detail-body");
+  body.innerHTML = "";
+  body.appendChild(momentCard(m, true));
+  $("#moment-detail").classList.remove("hidden");
+  if (!ghostMomentsOn()) {
+    apiJson("/api/moments/viewed", { moment_uid: m.id }).catch(() => {});
+  }
+}
+function closeMomentDetail() {
+  $("#moment-detail").classList.add("hidden");
+  $("#moment-detail-body").innerHTML = "";
+}
+$("#moment-detail-close").addEventListener("click", closeMomentDetail);
+$("#moment-detail").addEventListener("click", (e) => {
+  if (e.target.id === "moment-detail") closeMomentDetail();
+});
 $("#feed-refresh").addEventListener("click", loadFeed);
 
 $("#rollcall-btn").addEventListener("click", async () => {
