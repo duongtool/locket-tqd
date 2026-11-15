@@ -67,32 +67,24 @@
     <section id="view-post" class="view hidden">
       <h2>Đăng khoảnh khắc</h2>
       <div class="post-stage" id="post-stage">
-        <div class="post-placeholder" id="post-placeholder">
+        <video id="cam-preview" autoplay playsinline muted></video>
+        <div class="post-placeholder hidden" id="post-placeholder">
           <div class="cam-icon">📸</div>
-          <p>Chạm để chọn ảnh hoặc video</p>
+          <p id="post-placeholder-text">Đang mở camera…</p>
         </div>
         <img id="post-preview-img" class="hidden" alt="">
         <video id="post-preview-video" class="hidden" controls playsinline></video>
+        <button id="post-clear" class="post-clear hidden" type="button">✕ Bỏ chọn, dùng camera</button>
         <div id="post-caption-pill" class="caption-pill hidden"></div>
       </div>
       <input type="file" id="post-file" accept="image/*,video/*" class="hidden">
-      <div class="btn-row">
-        <button class="btn-ghost" id="cam-photo-btn" type="button">📷 Chụp bằng camera</button>
-        <button class="btn-ghost" id="cam-video-btn" type="button">🎥 Quay video (có tiếng)</button>
+      <div class="camera-controls">
+        <button class="cam-side" id="post-pick" type="button">⬆<span>Tải file lên</span></button>
+        <button class="shutter" id="cam-shutter" type="button" title="Chụp ảnh"></button>
+        <button class="cam-side" id="cam-record-btn" type="button">🎥<span>Quay video</span></button>
       </div>
-      <div id="camera-panel" class="camera-panel hidden">
-        <video id="cam-preview" autoplay playsinline muted></video>
-        <div class="btn-row">
-          <button class="btn-gold" id="cam-capture-btn" type="button">Chụp ảnh</button>
-          <button class="btn-gold hidden" id="cam-record-btn" type="button">● Bắt đầu quay</button>
-          <span id="cam-timer" class="muted-note"></span>
-          <button class="btn-ghost" id="cam-close-btn" type="button">Đóng camera</button>
-        </div>
-        <p class="muted-note">Quay video có thu cả âm thanh từ micro. Trình duyệt sẽ hỏi quyền camera và micro, bạn bấm “Cho phép” nhé. Camera chỉ chạy trên trang https hoặc localhost.</p>
-      </div>
-      <div class="shutter-row">
-        <button class="shutter" id="post-pick" title="Chọn ảnh hoặc video"></button>
-      </div>
+      <p class="cam-status"><span id="cam-timer"></span></p>
+      <p class="muted-note">Khung ở trên là camera trực tiếp: nút tròn ở giữa để chụp ảnh, nút bên phải để quay video (có thu tiếng), nút bên trái để tải ảnh hoặc video có sẵn lên. Trình duyệt sẽ hỏi quyền camera và micro, bạn bấm “Cho phép” nhé.</p>
       <label class="field">
         <span>Chú thích</span>
         <input type="text" id="post-caption" maxlength="120" placeholder="Viết gì đó thật vui…">

@@ -19,7 +19,6 @@ const state = {
   camStream: null,
   camRecorder: null,
   camChunks: [],
-  camMode: null,
   camTimerInt: null,
   presets: [],
   filtersLoaded: false,
@@ -76,7 +75,7 @@ function showView(name) {
     $(`#view-${v}`).classList.toggle("hidden", v !== name));
   $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
   if (name === "feed") loadFeed();
-  if (name === "post") { loadFilters(); renderRecipients(); }
+  if (name === "post") { loadFilters(); renderRecipients(); startCamera(); } else { stopCamera(); }
   if (name === "friends") loadFriends();
   if (name === "chat") loadConversations();
   if (name === "me") { loadMe(); loadDevice(); }
@@ -448,7 +447,6 @@ function refreshPostPill() {
   .forEach((id) => $("#" + id).addEventListener("input", refreshPostPill));
 
 $("#post-pick").addEventListener("click", () => $("#post-file").click());
-$("#post-stage").addEventListener("click", () => { if (!state.postFile) $("#post-file").click(); });
 
 function setPostFile(f) {
   state.postFile = f;
@@ -456,43 +454,74 @@ function setPostFile(f) {
   const isVideo = f.type.startsWith("video");
   state.postKind = isVideo ? "video" : "image";
   $("#post-placeholder").classList.add("hidden");
+  $("#cam-preview").classList.add("hidden");
+  $("#post-clear").classList.remove("hidden");
   $("#post-preview-img").classList.toggle("hidden", isVideo);
   $("#post-preview-video").classList.toggle("hidden", !isVideo);
   if (isVideo) $("#post-preview-video").src = url; else $("#post-preview-img").src = url;
   refreshPostPill();
 }
+
+function clearPostFile() {
+  state.postFile = null;
+  state.postKind = null;
+  $("#post-file").value = "";
+  $("#post-preview-img").classList.add("hidden");
+  const pv = $("#post-preview-video");
+  pv.classList.add("hidden");
+  pv.removeAttribute("src");
+  $("#post-clear").classList.add("hidden");
+  refreshPostPill();
+  startCamera();
+}
+$("#post-clear").addEventListener("click", clearPostFile);
+
 $("#post-file").addEventListener("change", (e) => {
   const f = e.target.files[0];
-  if (f) setPostFile(f);
+  if (f) { stopCamera(); setPostFile(f); }
 });
 
-/* ---------- Camera: chụp ảnh / quay video có âm thanh ---------- */
-async function openCamera(mode) {
-  closeCamera();
+/* ---------- Camera trực tiếp ngay trong khung Đăng ----------
+   Khung lớn là camera trực tiếp; nút tròn ở giữa chụp ảnh, nút bên phải
+   quay video (có thu tiếng), nút bên trái tải file có sẵn lên. */
+function showCamFallback(msg) {
+  const t = $("#post-placeholder-text");
+  if (t) t.textContent = msg;
+  $("#post-placeholder").classList.remove("hidden");
+}
+
+async function startCamera() {
+  if (state.postFile) return;
+  const pv = $("#cam-preview");
+  pv.classList.remove("hidden");
+  if (state.camStream) { $("#post-placeholder").classList.add("hidden"); return; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast("Trình duyệt này không hỗ trợ camera (cần https hoặc localhost).");
+    showCamFallback("Trình duyệt này không hỗ trợ camera (cần https hoặc localhost). Hãy dùng nút Tải file lên.");
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" },
-      audio: mode === "video",
-    });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+        audio: true,
+      });
+    } catch {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+        audio: false,
+      });
+    }
     state.camStream = stream;
-    state.camMode = mode;
-    const pv = $("#cam-preview");
     pv.srcObject = stream;
     pv.muted = true;
-    $("#camera-panel").classList.remove("hidden");
-    $("#cam-capture-btn").classList.toggle("hidden", mode !== "photo");
-    $("#cam-record-btn").classList.toggle("hidden", mode !== "video");
-    $("#cam-timer").textContent = "";
+    $("#post-placeholder").classList.add("hidden");
   } catch (ex) {
-    toast("Không mở được camera: " + ex.message);
+    showCamFallback("Không mở được camera: " + ex.message + " — hãy dùng nút Tải file lên.");
   }
 }
 
-function closeCamera() {
+function stopCamera() {
   if (state.camRecorder && state.camRecorder.state !== "inactive") {
     try { state.camRecorder.stop(); } catch { /* ignore */ }
   }
@@ -502,27 +531,27 @@ function closeCamera() {
     state.camStream.getTracks().forEach((t) => t.stop());
     state.camStream = null;
   }
-  const panel = $("#camera-panel");
-  if (panel) panel.classList.add("hidden");
-  const recBtn = $("#cam-record-btn");
-  if (recBtn) recBtn.textContent = "● Bắt đầu quay";
+  const rb = $("#cam-record-btn");
+  if (rb) {
+    rb.classList.remove("recording");
+    const sp = rb.querySelector("span");
+    if (sp) sp.textContent = "Quay video";
+  }
+  const tm = $("#cam-timer");
+  if (tm) tm.textContent = "";
 }
 
-$("#cam-photo-btn").addEventListener("click", () => openCamera("photo"));
-$("#cam-video-btn").addEventListener("click", () => openCamera("video"));
-$("#cam-close-btn").addEventListener("click", closeCamera);
-
-$("#cam-capture-btn").addEventListener("click", () => {
+$("#cam-shutter").addEventListener("click", () => {
   const pv = $("#cam-preview");
-  if (!pv.videoWidth) { toast("Camera chưa sẵn sàng"); return; }
+  if (!state.camStream || !pv.videoWidth) { toast("Camera chưa sẵn sàng"); return; }
   const canvas = document.createElement("canvas");
   canvas.width = pv.videoWidth;
   canvas.height = pv.videoHeight;
   canvas.getContext("2d").drawImage(pv, 0, 0);
   canvas.toBlob((blob) => {
     if (!blob) { toast("Chụp thất bại"); return; }
+    stopCamera();
     setPostFile(new File([blob], "camera-photo.jpg", { type: "image/jpeg" }));
-    closeCamera();
     toast("Đã chụp ảnh 📷");
   }, "image/jpeg", 0.92);
 });
@@ -532,7 +561,7 @@ $("#cam-record-btn").addEventListener("click", () => {
     state.camRecorder.stop();
     return;
   }
-  if (!state.camStream) { toast("Camera chưa mở"); return; }
+  if (!state.camStream) { toast("Camera chưa mở"); startCamera(); return; }
   if (typeof MediaRecorder === "undefined") {
     toast("Trình duyệt này không hỗ trợ quay video.");
     return;
@@ -550,21 +579,23 @@ $("#cam-record-btn").addEventListener("click", () => {
   rec.ondataavailable = (e) => { if (e.data && e.data.size) state.camChunks.push(e.data); };
   rec.onstop = () => {
     if (state.camTimerInt) { clearInterval(state.camTimerInt); state.camTimerInt = null; }
-    $("#cam-record-btn").textContent = "● Bắt đầu quay";
+    $("#cam-timer").textContent = "";
     const type = rec.mimeType || mime || "video/webm";
     const ext = type.includes("mp4") ? "mp4" : "webm";
     const blob = new Blob(state.camChunks, { type });
+    stopCamera();
     setPostFile(new File([blob], `camera-video.${ext}`, { type }));
-    closeCamera();
     toast("Đã quay xong video 🎥");
   };
   state.camRecorder = rec;
   rec.start(250);
-  $("#cam-record-btn").textContent = "■ Dừng quay";
+  const rb = $("#cam-record-btn");
+  rb.classList.add("recording");
+  rb.querySelector("span").textContent = "Dừng quay";
   const t0 = Date.now();
   state.camTimerInt = setInterval(() => {
     const s = Math.floor((Date.now() - t0) / 1000);
-    $("#cam-timer").textContent = `Đang quay ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")} (có tiếng)`;
+    $("#cam-timer").textContent = `● Đang quay ${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")} (có tiếng)`;
   }, 500);
 });
 
@@ -598,7 +629,7 @@ $("#post-submit").addEventListener("click", async () => {
     $("#post-file").value = "";
     $("#post-preview-img").classList.add("hidden");
     $("#post-preview-video").classList.add("hidden");
-    $("#post-placeholder").classList.remove("hidden");
+    $("#post-clear").classList.add("hidden");
     $("#post-caption").value = "";
     $$(".recipient-check").forEach((c) => (c.checked = false));
     refreshPostPill();
