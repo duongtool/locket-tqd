@@ -8,3 +8,4 @@ websockets>=12.0
 pillow>=9.0.0
 imageio-ffmpeg>=0.4.8
 httpx>=0.27  # chỉ dùng cho bộ kiểm thử tests/smoke_test.py
+gunicorn>=22.0.0
