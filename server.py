@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Locket Tqd - Backend Server
-Khai thác full locketlam SDK (https://github.com/leanhminh2104/locketlam)
-Ready for Render.com deployment
+Khai thác full locketlam SDK — auto_compress H.265 cho video > 6MB
 """
 
 import os
@@ -24,10 +23,7 @@ try:
         LocketError,
     )
 except ImportError:
-    print("=" * 60)
-    print("⚠️  Chưa cài locketlam!")
-    print("   Chạy: pip install locketlam flask flask-cors gunicorn")
-    print("=" * 60)
+    print("Chưa cài locketlam! pip install locketlam flask flask-cors gunicorn")
     raise
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -43,8 +39,6 @@ SESSION_DIR = os.path.join(BASE_DIR, "sessions")
 os.makedirs(SESSION_DIR, exist_ok=True)
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-MAX_VIDEO_BYTES = 6 * 1024 * 1024  # 6 MB Locket hard limit
 
 
 def get_client():
@@ -65,7 +59,7 @@ def require_auth(f):
 
 
 def extract_thumbnail(video_path: str) -> str:
-    """Cắt 1 frame từ video làm thumbnail JPG."""
+    """Cắt 1 frame từ video làm thumbnail JPG (dự phòng)."""
     out_path = os.path.join(UPLOAD_DIR, f"thumb_{uuid.uuid4().hex}.jpg")
     ffmpeg_bin = "ffmpeg"
     try:
@@ -73,23 +67,15 @@ def extract_thumbnail(video_path: str) -> str:
         ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
         pass
-
     for ss in ("0.5", "0"):
-        cmd = [
-            ffmpeg_bin, "-y",
-            "-ss", ss,
-            "-i", video_path,
-            "-frames:v", "1",
-            "-q:v", "3",
-            out_path,
-        ]
+        cmd = [ffmpeg_bin, "-y", "-ss", ss, "-i", video_path, "-frames:v", "1", "-q:v", "3", out_path]
         try:
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
             if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
                 return out_path
         except Exception:
             continue
-    raise RuntimeError("Không cắt được thumbnail từ video")
+    raise RuntimeError("Không cắt được thumbnail")
 
 
 @app.route("/")
@@ -117,7 +103,6 @@ def login():
     password = data.get("password", "")
     if not email or not password:
         return jsonify({"ok": False, "error": "Thiếu email hoặc mật khẩu"}), 400
-
     sid = str(uuid.uuid4())
     session_path = os.path.join(SESSION_DIR, f"{sid}.json")
     try:
@@ -168,8 +153,7 @@ def profile(client):
 @require_auth
 def profile_by_username(client, username):
     try:
-        data = client.user.get_profile_by_username(username)
-        return jsonify({"ok": True, "profile": data or {}})
+        return jsonify({"ok": True, "profile": client.user.get_profile_by_username(username) or {}})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
@@ -263,7 +247,11 @@ def moments_by_username(client, username):
 @app.route("/api/moments/post", methods=["POST"])
 @require_auth
 def post_moment(client):
-    """Post photo/video. Video < 6MB. Tự cắt thumbnail nếu thiếu ảnh."""
+    """
+    Đăng ảnh/video.
+    Video: auto_compress=True (locketlam nén H.265 nếu >= 6MB),
+    priority=balanced|video|audio.
+    """
     image_path = None
     video_path = None
     thumb_generated = None
@@ -306,39 +294,48 @@ def post_moment(client):
         if not image_path and not video_path:
             return jsonify({"ok": False, "error": "Thiếu ảnh hoặc video"}), 400
 
+        original_mb = None
         if video_path:
-            size = os.path.getsize(video_path)
-            if size >= MAX_VIDEO_BYTES:
-                mb = size / (1024 * 1024)
-                return jsonify({
-                    "ok": False,
-                    "error": f"Video quá nặng ({mb:.1f} MB). Locket chỉ nhận dưới 6 MB. Hãy nén HEVC rồi thử lại."
-                }), 400
-
+            original_mb = round(os.path.getsize(video_path) / (1024 * 1024), 2)
             if not image_path:
                 try:
                     image_path = extract_thumbnail(video_path)
                     thumb_generated = image_path
-                except Exception as e:
-                    return jsonify({
-                        "ok": False,
-                        "error": f"Không tạo được thumbnail: {e}. Chọn thêm 1 ảnh làm thumbnail."
-                    }), 400
+                except Exception:
+                    image_path = None  # locketlam cũng tự cắt thumb từ video
 
-        kwargs = {"caption": caption, "is_private": is_private, "note_type": note_type}
+        priority = (request.form.get("priority") or "balanced").lower()
+        if priority not in ("video", "audio", "balanced"):
+            priority = "balanced"
+
+        kwargs = {
+            "caption": caption,
+            "is_private": is_private,
+            "note_type": note_type,
+        }
         if icon:
             kwargs["icon"] = icon
         if colors:
             kwargs["colors"] = colors
 
         if video_path:
-            kwargs["image"] = image_path
+            if image_path:
+                kwargs["image"] = image_path
             kwargs["video"] = video_path
+            # Đúng theo docs locketlam: tự nén H.265 nếu >= 6MB
+            kwargs["auto_compress"] = True
+            kwargs["priority"] = priority
         else:
             kwargs["image"] = image_path
 
         result = client.moments.post(**kwargs)
-        return jsonify({"ok": True, "moment": result})
+        return jsonify({
+            "ok": True,
+            "moment": result,
+            "original_size_mb": original_mb,
+            "auto_compress": bool(video_path),
+            "priority": priority if video_path else None,
+        })
     except StorageUploadError as e:
         return jsonify({"ok": False, "error": f"Upload thất bại: {str(e)}"}), 400
     except Exception as e:
@@ -427,7 +424,7 @@ def send_message(client):
 
 @app.route("/api/note-types")
 def note_types():
-    types = [attr for attr in dir(NoteType) if not attr.startswith("_") and attr.isupper()]
+    types = [a for a in dir(NoteType) if not a.startswith("_") and a.isupper()]
     return jsonify({"ok": True, "types": types})
 
 
@@ -439,8 +436,5 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-    print("\n" + "=" * 60)
-    print("💛  Locket Tqd Server")
-    print(f"    http://0.0.0.0:{port}")
-    print("=" * 60 + "\n")
+    print("Locket Tqd on port", port)
     app.run(host="0.0.0.0", port=port, debug=debug)
