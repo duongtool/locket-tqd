@@ -324,7 +324,7 @@ function renderFeedGrid() {
     const lines = Object.entries(pu).map(
       ([uid, n]) => `${fullName(state.friendByUid[uid] || { uid })}: ${n} khoảnh khắc`
     );
-    countEl.title = `Nguồn mới nhất: ${state.feedStats.latest} · quét feed thêm: ${state.feedStats.scan}\n${lines.join("\n")}`;
+    countEl.title = `Nguồn mới nhất: ${state.feedStats.latest} · quét feed thêm: ${state.feedStats.scan} · quét trò chuyện thêm: ${state.feedStats.firestore ?? "?"} (trong ${state.feedStats.conversations ?? "?"} cuộc trò chuyện)\n${lines.join("\n")}`;
   }
   grid.innerHTML = "";
   $("#feed-empty").classList.toggle("hidden", items.length > 0);

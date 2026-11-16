@@ -234,6 +234,8 @@ def main():
     import backend.app as app_module
 
     app_module._client = FakeClient()
+    # Không gọi Firestore thật trong kiểm thử
+    app_module._firestore_harvest = lambda client: ([], 0, True)
 
     from fastapi.testclient import TestClient
 

@@ -18,7 +18,7 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -315,12 +315,102 @@ def feed():
 _feed_cache: dict = {"ts": 0.0, "items": None}
 
 
+def _firestore_harvest(client) -> tuple:
+    """Quét toàn bộ cuộc trò chuyện trong Firestore để lượm mọi moment đã
+    từng được chia sẻ với người dùng — kỹ thuật của chính thư viện trong
+    get_all_my_moments, nhưng áp dụng cho cả bạn bè và lật đủ mọi trang
+    tin nhắn (bản gốc của thư viện chỉ đọc 200 tin đầu mỗi cuộc trò chuyện
+    và chỉ lấy moment của chính mình). Nguồn này không bị giới hạn cửa sổ
+    của hàm feed getLatestMomentV2. Trả (danh sách moment, số cuộc trò
+    chuyện đã quét, thành công hay không)."""
+    import json as _json
+    import urllib.parse as _up
+    import urllib.request as _rq
+
+    try:
+        token = client.session.get_valid_token()
+        my_uid = client.session.uid
+    except Exception:
+        return [], 0, False
+    base = ("https://firestore.googleapis.com/v1/projects/locket-4252a"
+            "/databases/(default)/documents")
+
+    def _get(url):
+        req = _rq.Request(url, headers={"Authorization": f"Bearer {token}"})
+        with _rq.urlopen(req, timeout=20) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+
+    try:
+        conv_ids = []
+        page = None
+        while len(conv_ids) < 60:
+            url = f"{base}/users/{my_uid}/conversations?pageSize=100"
+            if page:
+                url += f"&pageToken={page}"
+            data = _get(url)
+            for doc in data.get("documents", []):
+                conv_ids.append(doc["name"].split("/")[-1])
+            page = data.get("nextPageToken")
+            if not page:
+                break
+    except Exception:
+        return [], 0, False
+
+    def _scan_conv(cid):
+        found = []
+        page = None
+        scanned = 0
+        while scanned < 5000:
+            url = f"{base}/conversations/{cid}/messages?pageSize=300"
+            if page:
+                url += f"&pageToken={page}"
+            data = _get(url)
+            for mdoc in data.get("documents", []):
+                scanned += 1
+                f = mdoc.get("fields", {})
+                thumb = (f.get("thumbnail_url") or {}).get("stringValue", "")
+                if not thumb or "moments" not in thumb or "thumbnails" not in thumb:
+                    continue
+                plain = _up.unquote(thumb)
+                author = None
+                if "/users/" in plain:
+                    author = plain.split("/users/", 1)[1].split("/", 1)[0]
+                mid = ((f.get("reply_moment") or {}).get("stringValue")
+                       or mdoc["name"].split("/")[-1])
+                found.append({
+                    "moment_uid": mid,
+                    "user_uid": author,
+                    "thumbnail_url": thumb,
+                    "video_url": (f.get("video_url") or {}).get("stringValue"),
+                    "caption": "",
+                    "created_at": (f.get("created_at") or {}).get("timestampValue", ""),
+                    "source": "firestore",
+                })
+            page = data.get("nextPageToken")
+            if not page:
+                break
+        return found
+
+    items = []
+    ok = True
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_scan_conv, cid): cid for cid in conv_ids}
+        for fut in as_completed(futures):
+            try:
+                items.extend(fut.result())
+            except Exception:
+                ok = False
+    return items, len(conv_ids), ok
+
+
 @app.get("/api/feed/full")
 def feed_full(fresh: bool = False):
-    """Toàn bộ khoảnh khắc: GỘP CẢ BA NGUỒN của thư viện locketlam —
+    """Toàn bộ khoảnh khắc: GỘP CẢ BỐN NGUỒN của thư viện locketlam —
     (1) get_latest(), (2) quét feed một lượt bằng sync_token (bắt được cả
     moment nhóm và moment lọt khỏi bộ lọc theo người), (3) lịch sử riêng
-    từng bạn bè + chính mình bằng get_shared_moments_by_user chạy đa luồng.
+    từng bạn bè + chính mình bằng get_shared_moments_by_user chạy đa luồng,
+    (4) quét toàn bộ trò chuyện Firestore theo kỹ thuật get_all_my_moments
+    để bắt những moment đã trôi khỏi cửa sổ của hàm feed.
     Trả kèm thống kê từng nguồn/từng người để biết còn thiếu ở đâu; kết quả
     chỉ được đệm 120 giây khi đã nạp trọn, thiếu thì lần sau tự nạp lại."""
     client = require_auth()
@@ -428,6 +518,18 @@ def feed_full(fresh: bool = False):
                         stats["empty_users"] += 1
                     for m in items:
                         _add(m)
+
+        # (4) Toàn bộ trò chuyện Firestore (kỹ thuật get_all_my_moments của
+        # thư viện): bắt mọi moment đã từng được chia sẻ với người dùng, kể
+        # cả những cái đã trôi khỏi cửa sổ của hàm feed getLatestMomentV2.
+        before_fs = len(merged)
+        fs_items, conv_count, fs_ok = _firestore_harvest(client)
+        for item in fs_items:
+            _add(item)
+        stats["firestore"] = len(merged) - before_fs
+        stats["conversations"] = conv_count
+        if not fs_ok:
+            stats["complete"] = False
 
         items = sorted(
             merged.values(), key=lambda x: x.get("created_at") or 0, reverse=True
