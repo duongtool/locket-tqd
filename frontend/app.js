@@ -384,6 +384,31 @@ $("#rollcall-btn").addEventListener("click", async () => {
 });
 
 /* ================= Đăng bài ================= */
+// Các nhãn động nhóm General (nhạc, thời tiết, giờ...) trong thư viện không
+// có sẵn chữ/biểu tượng vì app Locket tự điền nội dung khi hiển thị, nên ở
+// đây đặt tên tiếng Việt + biểu tượng đại diện để người dùng thấy và chọn được.
+const PRESET_NAMES = {
+  standard: ["✏️", "Chú thích thường"],
+  review: ["⭐", "Đánh giá"],
+  music: ["🎵", "Âm nhạc"],
+  location: ["📍", "Vị trí"],
+  weather: ["🌤️", "Thời tiết"],
+  time: ["🕐", "Thời gian"],
+  streak: ["🔥", "Chuỗi ngày (streak)"],
+  star_sign: ["♈", "Cung hoàng đạo"],
+  poll: ["📊", "Bình chọn"],
+  locket_count: ["💛", "Đếm số Locket"],
+  colors: ["🎨", "Màu sắc"],
+  color_palette: ["🖍️", "Bảng màu"],
+};
+function presetDisplay(p) {
+  const named = PRESET_NAMES[p.id];
+  return {
+    icon: p.icon || (named ? named[0] : ""),
+    name: p.text || (named ? named[1] : p.id.replace(/_/g, " ")),
+  };
+}
+
 async function loadPresets() {
   try {
     const data = await api("/api/presets");
@@ -399,9 +424,10 @@ async function loadPresets() {
       const g = document.createElement("optgroup");
       g.label = sec;
       arr.forEach((p) => {
+        const d = presetDisplay(p);
         const o = document.createElement("option");
         o.value = p.id;
-        o.textContent = `${p.icon ? p.icon + " " : ""}${p.text || p.id}`;
+        o.textContent = `${d.icon ? d.icon + " " : ""}${d.name}`;
         g.appendChild(o);
       });
       sel.appendChild(g);
@@ -444,8 +470,14 @@ function refreshPostPill() {
   const preset = currentPreset();
   const caption = $("#post-caption").value.trim();
   const useCustom = $("#post-custom-colors").checked;
-  const text = caption || (preset && preset.text) || "";
-  const icon = preset && preset.icon ? preset.icon : "";
+  let text = caption || (preset && preset.text) || "";
+  let icon = preset && preset.icon ? preset.icon : "";
+  // Nhãn động (General) không có chữ sẵn: hiện tên kiểu nhãn để thấy đã chọn.
+  if (!text && !icon && preset) {
+    const d = presetDisplay(preset);
+    text = d.name;
+    icon = d.icon;
+  }
   if (!text && !icon && !useCustom) { pill.classList.add("hidden"); return; }
   let colors = preset && preset.colors && preset.colors.length ? preset.colors : null;
   let textColor = (preset && preset.text_color) || "#FFFFFF";
