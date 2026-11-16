@@ -317,11 +317,12 @@ _feed_cache: dict = {"ts": 0.0, "items": None}
 
 @app.get("/api/feed/full")
 def feed_full(fresh: bool = False):
-    """Toàn bộ khoảnh khắc, dùng đúng phương thức của thư viện locketlam:
-    get_latest() + get_shared_moments_by_user() cho từng bạn bè và cho
-    chính mình. Thư viện tự lật trang bằng sync_token kèm excluded_users
-    cho tới khi hết dữ liệu của từng người nên lấy được trọn lịch sử.
-    Kết quả đệm 120 giây; giao diện hiện trang đầu ngay và bổ sung sau."""
+    """Toàn bộ khoảnh khắc: GỘP CẢ BA NGUỒN của thư viện locketlam —
+    (1) get_latest(), (2) quét feed một lượt bằng sync_token (bắt được cả
+    moment nhóm và moment lọt khỏi bộ lọc theo người), (3) lịch sử riêng
+    từng bạn bè + chính mình bằng get_shared_moments_by_user chạy đa luồng.
+    Trả kèm thống kê từng nguồn/từng người để biết còn thiếu ở đâu; kết quả
+    chỉ được đệm 120 giây khi đã nạp trọn, thiếu thì lần sau tự nạp lại."""
     client = require_auth()
 
     now = time.time()
@@ -335,16 +336,66 @@ def feed_full(fresh: bool = False):
 
     def _do():
         merged: dict = {}
+        stats: dict = {
+            "latest": 0,
+            "scan": 0,
+            "per_user": {},
+            "empty_users": 0,
+            "complete": True,
+        }
 
-        def _add(m):
+        def _add(m) -> bool:
             nm = normalize_moment(m)
             nm.pop("raw", None)
             mid = nm.get("id")
             if mid and mid not in merged:
                 merged[mid] = nm
+                return True
+            return False
 
-        for m in client.moments.get_latest() or []:
+        # (1) Trang mới nhất
+        try:
+            latest = client.moments.get_latest() or []
+        except Exception:
+            latest = []
+        stats["latest"] = len(latest)
+        for m in latest:
             _add(m)
+
+        # (2) Quét feed một lượt bằng sync_token (bổ sung moment nhóm)
+        seen = set()
+        sync = None
+        scan_complete = False
+        for _ in range(100):
+            payload = {
+                "should_count_missed_moments": True,
+                "include_group_moments": True,
+            }
+            if sync:
+                payload["sync_token"] = sync
+            res = client.post_api("getLatestMomentV2", payload)
+            data = res.get("data", []) if isinstance(res, dict) else []
+            if not data:
+                scan_complete = True
+                break
+            new_count = 0
+            for m in data:
+                if not isinstance(m, dict):
+                    continue
+                mid = m.get("canonical_uid")
+                if mid and mid not in seen:
+                    seen.add(mid)
+                    new_count += 1
+                    sync = mid
+                    if _add(m):
+                        stats["scan"] += 1
+            if new_count == 0 or (isinstance(res, dict) and res.get("status") == 304):
+                scan_complete = True
+                break
+        if not scan_complete:
+            stats["complete"] = False
+
+        # (3) Lịch sử riêng từng người, đa luồng, thử lại khi ra trống
         try:
             friends = client.friends.get_all_friends() or []
         except Exception:
@@ -356,27 +407,35 @@ def feed_full(fresh: bool = False):
         if my_uid and my_uid not in targets:
             targets.append(my_uid)
 
-        # Đa luồng: quét lịch sử của từng người SONG SONG (tối đa 6 luồng)
-        # thay vì lần lượt từng người, tổng thời gian giảm còn khoảng 1/6.
-        # post_api của thư viện dùng urllib độc lập mỗi lần gọi nên an toàn.
         def _fetch(uid):
-            try:
-                return client.moments.get_shared_moments_by_user(uid) or []
-            except Exception:
-                return []
+            items = []
+            for attempt in range(2):
+                try:
+                    items = client.moments.get_shared_moments_by_user(uid) or []
+                except Exception:
+                    items = []
+                if items:
+                    break
+                if attempt == 0:
+                    time.sleep(1)
+            return uid, items
 
         if targets:
-            with ThreadPoolExecutor(max_workers=min(6, len(targets))) as pool:
-                for items in pool.map(_fetch, targets):
+            with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
+                for uid, items in pool.map(_fetch, targets):
+                    stats["per_user"][uid] = len(items)
+                    if not items:
+                        stats["empty_users"] += 1
                     for m in items:
                         _add(m)
 
         items = sorted(
             merged.values(), key=lambda x: x.get("created_at") or 0, reverse=True
         )
-        _feed_cache["ts"] = time.time()
-        _feed_cache["items"] = items
-        return {"items": items, "count": len(items)}
+        if stats["complete"]:
+            _feed_cache["ts"] = time.time()
+            _feed_cache["items"] = items
+        return {"items": items, "count": len(items), "stats": stats}
 
     return run_lib(_do)
 

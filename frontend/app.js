@@ -274,6 +274,7 @@ async function loadFeed(forceFresh = false) {
   try {
     if (countEl && countEl.textContent) countEl.textContent += " · đang tải thêm toàn bộ…";
     const full = await api(forceFresh ? "/api/feed/full?fresh=1" : "/api/feed/full");
+    if (full.stats) state.feedStats = full.stats;
     if ((full.items || []).length >= state.feedItems.length) {
       const y = window.scrollY;
       state.feedItems = full.items;
@@ -313,7 +314,18 @@ function renderFeedGrid() {
   const grid = $("#feed-grid");
   const selVal = $("#feed-filter").value || "all";
   const items = state.feedItems.filter((m) => selVal === "all" || feedAuthorUid(m) === selVal);
-  $("#feed-count").textContent = items.length ? `${items.length} khoảnh khắc` : "";
+  const countEl = $("#feed-count");
+  countEl.textContent = items.length ? `${items.length} khoảnh khắc` : "";
+  if (selVal === "all" && state.feedStats) {
+    if (state.feedStats.complete === false) {
+      countEl.textContent += " · có thể chưa đủ, bấm ⟳ thử lại";
+    }
+    const pu = state.feedStats.per_user || {};
+    const lines = Object.entries(pu).map(
+      ([uid, n]) => `${fullName(state.friendByUid[uid] || { uid })}: ${n} khoảnh khắc`
+    );
+    countEl.title = `Nguồn mới nhất: ${state.feedStats.latest} · quét feed thêm: ${state.feedStats.scan}\n${lines.join("\n")}`;
+  }
   grid.innerHTML = "";
   $("#feed-empty").classList.toggle("hidden", items.length > 0);
   items.forEach((m) => {
